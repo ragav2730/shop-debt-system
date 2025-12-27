@@ -2,12 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Typography,
   Chip,
   TextField,
@@ -22,41 +16,30 @@ import {
   useMediaQuery,
   Grid,
   Avatar,
-  Badge,
   Divider,
-  InputAdornment,
-  Tooltip,
-  Fade,
-  Link
+  InputAdornment
 } from '@mui/material';
+
 import {
-  Visibility,
   PersonAdd,
   Search,
   FilterList,
   Phone,
-  Store,
-  AccountBalance,
-  Person,
   ArrowForward,
-  MoreVert,
   CheckCircle,
-  Pending,
-  TrendingUp,
-  Sort,
-  PhoneForwarded
+  Pending
 } from '@mui/icons-material';
+
 import { Link as RouterLink } from 'react-router-dom';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 
-const categories = ['All', 'Cement', 'Bricks', 'Steel', 'Sheat', 'Other'];
+const categories = ['All', 'Cement', 'Bricks', 'Steel', 'Sheet', 'Other'];
 
 const CustomerList = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isTablet = useMediaQuery(theme.breakpoints.down('lg'));
-  
+
   const [customers, setCustomers] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -64,182 +47,128 @@ const CustomerList = () => {
 
   useEffect(() => {
     const q = query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const customersData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setCustomers(customersData);
-      setFilteredCustomers(customersData);
+    return onSnapshot(q, snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setCustomers(data);
+      setFilteredCustomers(data);
     });
-
-    return unsubscribe;
   }, []);
 
   useEffect(() => {
     let filtered = customers;
 
     if (selectedCategory !== 'All') {
-      filtered = filtered.filter(customer => customer.category === selectedCategory);
+      filtered = filtered.filter(c => c.category === selectedCategory);
     }
 
     if (searchTerm) {
-      filtered = filtered.filter(customer =>
-        customer.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.phone.includes(searchTerm) ||
-        customer.productName?.toLowerCase().includes(searchTerm.toLowerCase())
+      filtered = filtered.filter(c =>
+        c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.phone.includes(searchTerm)
       );
     }
 
     setFilteredCustomers(filtered);
   }, [selectedCategory, searchTerm, customers]);
 
-  const getStatusColor = (balance) => {
-    return balance > 0 ? 'error' : 'success';
+  /* ---------- STATS ---------- */
+  const totalCustomers = customers.length;
+  const pendingCount = customers.filter(c => c.balance > 0).length;
+  const totalBalance = customers.reduce((s, c) => s + (c.balance || 0), 0);
+  const todayAdded = customers.filter(c => {
+    const d = c.createdAt?.toDate();
+    return d && d.toDateString() === new Date().toDateString();
+  }).length;
+
+  const getInitials = name =>
+    name?.split(' ').map(n => n[0]).join('').slice(0, 2);
+
+  const handlePhoneCall = phone => {
+    window.location.href = `tel:${phone.replace(/[^\d+]/g, '')}`;
   };
 
-  const getInitials = (name) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-  };
-
-  const getBalanceColor = (balance) => {
-    if (balance === 0) return '#4caf50'; // Green
-    if (balance <= 1000) return '#ff9800'; // Orange
-    return '#f44336'; // Red
-  };
-
-  // Function to handle phone call - opens dial pad with number
-  const handlePhoneCall = (phoneNumber) => {
-    // Clean the phone number - remove any non-digit characters except +
-    const cleanNumber = phoneNumber.replace(/[^\d+]/g, '');
-    
-    // For mobile devices, this will open the native dial pad
-    // For web browsers, it will show a confirmation
-    if (window.confirm(`Call ${cleanNumber}?`)) {
-      window.location.href = `tel:${cleanNumber}`;
-    }
-  };
-
-  // Mobile Card View Component with phone click functionality
+  /* ---------- CUSTOMER CARD (MOBILE-FIRST) ---------- */
   const CustomerCard = ({ customer }) => (
-    <Card 
-      elevation={2}
-      sx={{ 
+    <Card
+      sx={{
         mb: 2,
-        borderRadius: 2,
-        borderLeft: `4px solid ${getBalanceColor(customer.balance || 0)}`,
-        '&:hover': {
-          transform: 'translateY(-2px)',
-          boxShadow: 4,
-          transition: 'all 0.2s ease'
-        }
+        borderRadius: 4,
+        bgcolor: '#FFF7F7',
+        border: '1px solid #F1DCDC',
+        boxShadow: 'none'
       }}
     >
       <CardContent sx={{ p: 2 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Avatar 
-              sx={{ 
-                bgcolor: '#d32f2f',
-                width: 48,
-                height: 48,
-                fontWeight: 'bold'
-              }}
-            >
-              {getInitials(customer.customerName || 'CU')}
+        <Stack direction="row" justifyContent="space-between">
+          <Stack direction="row" spacing={2}>
+            <Avatar sx={{ bgcolor: '#C62828', fontWeight: 700 }}>
+              {getInitials(customer.customerName)}
             </Avatar>
             <Box>
-              <Typography variant="h6" fontWeight="bold" gutterBottom>
+              <Typography fontWeight={700}>
                 {customer.customerName}
               </Typography>
-              {/* Clickable Phone Number */}
               <Button
-                startIcon={<Phone fontSize="small" />}
                 onClick={() => handlePhoneCall(customer.phone)}
+                startIcon={<Phone fontSize="small" />}
                 sx={{
-                  textTransform: 'none',
-                  color: 'primary.main',
                   p: 0,
                   minWidth: 'auto',
-                  '&:hover': {
-                    color: '#b71c1c',
-                    bgcolor: 'transparent'
-                  }
+                  textTransform: 'none',
+                  color: '#B71C1C'
                 }}
               >
-                <Typography variant="body2" sx={{ textDecoration: 'underline' }}>
-                  {customer.phone} (அலைபேசி)
-                </Typography>
+                {customer.phone} (அலைபேசி)
               </Button>
             </Box>
           </Stack>
-          
+
           <IconButton
             component={RouterLink}
             to={`/list/${customer.id}`}
-            color="primary"
-            size="small"
+            sx={{ bgcolor: '#FFECEC' }}
           >
             <ArrowForward />
           </IconButton>
         </Stack>
 
-        <Divider sx={{ my: 2 }} />
+        <Divider sx={{ my: 1.5 }} />
 
-        <Grid container spacing={2}>
+        <Grid container spacing={1.5}>
           <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
-              Product (பொருள்)
-            </Typography>
-            <Typography variant="body2" fontWeight="medium">
-              {customer.productName || 'N/A'}
+            <Typography variant="caption">Total</Typography>
+            <Typography fontWeight={700}>
+              ₹{customer.amount?.toFixed(2)}
             </Typography>
           </Grid>
+
           <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
-              Category (வகை)
+            <Typography variant="caption">Balance</Typography>
+            <Typography
+              fontWeight={700}
+              color={customer.balance > 0 ? 'error.main' : 'success.main'}
+            >
+              ₹{customer.balance?.toFixed(2)}
             </Typography>
-            <Typography variant="body2">
-              <Chip 
-                label={customer.category || 'Other'} 
-                size="small" 
-                sx={{ 
-                  bgcolor: '#e3f2fd',
-                  color: '#1565c0',
-                  fontSize: '0.7rem'
+          </Grid>
+
+          <Grid item xs={12}>
+            <Stack direction="row" justifyContent="space-between">
+              <Chip
+                size="small"
+                label={
+                  customer.balance > 0
+                    ? 'Pending (நிலுவை)'
+                    : 'Paid (செலுத்தப்பட்டது)'
+                }
+                icon={customer.balance > 0 ? <Pending /> : <CheckCircle />}
+                sx={{
+                  bgcolor: customer.balance > 0 ? '#FFD6D6' : '#E6F7EC',
+                  color: customer.balance > 0 ? '#C62828' : '#2E7D32',
+                  fontWeight: 600
                 }}
               />
-            </Typography>
-          </Grid>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
-              Total (மொத்தம்)
-            </Typography>
-            <Typography variant="body1" fontWeight="bold">
-              ₹{customer.amount?.toFixed(2) || '0.00'}
-            </Typography>
-          </Grid>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">
-              Balance (மீதி)
-            </Typography>
-            <Typography 
-              variant="body1" 
-              fontWeight="bold"
-              color={customer.balance > 0 ? 'error' : 'success.main'}
-            >
-              ₹{customer.balance?.toFixed(2) || '0.00'}
-            </Typography>
-          </Grid>
-          <Grid item xs={12}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Chip
-                label={customer.balance > 0 ? 'Pending (நிலுவை)' : 'Paid (செலுத்தப்பட்டது)'}
-                color={getStatusColor(customer.balance)}
-                size="small"
-                icon={customer.balance > 0 ? <Pending /> : <CheckCircle />}
-              />
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption">
                 {customer.createdAt?.toDate().toLocaleDateString('ta-IN')}
               </Typography>
             </Stack>
@@ -250,389 +179,126 @@ const CustomerList = () => {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ px: isMobile ? 1 : 3, py: isMobile ? 1 : 3 }}>
-      <Paper 
-        elevation={3} 
-        sx={{ 
-          p: isMobile ? 2 : 4, 
-          mt: isMobile ? 1 : 4,
-          borderRadius: 3,
-          background: 'linear-gradient(to bottom right, #ffffff, #f8f9fa)'
+    <Container maxWidth="lg" sx={{ py: isMobile ? 1 : 3 }}>
+      <Paper
+        sx={{
+          p: isMobile ? 2 : 3,
+          borderRadius: 4,
+          bgcolor: '#FFFFFF'
         }}
       >
-        {/* Header Section - No changes */}
-        <Box sx={{ 
-          display: 'flex', 
-          flexDirection: isMobile ? 'column' : 'row', 
-          justifyContent: 'space-between', 
-          alignItems: isMobile ? 'flex-start' : 'center',
-          mb: 4,
-          gap: isMobile ? 2 : 0
-        }}>
-          <Box>
-            <Typography variant={isMobile ? "h5" : "h4"} color="primary" fontWeight="bold" gutterBottom>
-              Debt Customers List (கடன் வாடிக்கையாளர்கள்)
-            </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Total: {filteredCustomers.length} customers | Pending: {filteredCustomers.filter(c => c.balance > 0).length}
-            </Typography>
-          </Box>
-          
+        {/* ---------- HEADER ---------- */}
+        <Stack
+          direction={isMobile ? 'column' : 'row'}
+          justifyContent="space-between"
+          alignItems={isMobile ? 'stretch' : 'center'}
+          spacing={2}
+          mb={3}
+        >
+          <Typography variant="h5" fontWeight={800} color="#C62828">
+            கடன் வாடிக்கையாளர்கள்
+          </Typography>
+
+          {/* Desktop compact button | Mobile full */}
           <Button
             component={RouterLink}
             to="/entry"
-            variant="contained"
-            color="primary"
-            size={isMobile ? "medium" : "large"}
             startIcon={<PersonAdd />}
+            fullWidth={isMobile}
             sx={{
-              borderRadius: 2,
-              px: 3,
-              py: isMobile ? 1 : 1.5,
-              background: 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)',
-              '&:hover': {
-                background: 'linear-gradient(135deg, #b71c1c 0%, #8b0000 100%)'
-              }
+              px: isMobile ? 2 : 2.5,
+              py: isMobile ? 1.4 : 1,
+              borderRadius: 3,
+              fontWeight: 700,
+              fontSize: isMobile ? '1rem' : '0.85rem',
+              maxWidth: isMobile ? '100%' : 220,
+              background: 'linear-gradient(135deg,#E53935,#B71C1C)',
+              boxShadow: 'none'
+            }}
+            variant="contained"
+          >
+            Add Customer
+          </Button>
+        </Stack>
+
+        {/* ---------- STATS (MOBILE SAFE) ---------- */}
+        <Grid container spacing={1.5} sx={{ mb: 2 }}>
+          {[
+            { label: 'Total', value: totalCustomers },
+            { label: 'Pending', value: pendingCount },
+            { label: 'Total Balance', value: `₹${totalBalance.toFixed(0)}` },
+            { label: 'Today Added', value: todayAdded }
+          ].map((s, i) => (
+            <Grid item xs={6} key={i}>
+              <Card
+                sx={{
+                  p: 1.5,
+                  borderRadius: 3,
+                  bgcolor: '#FFF5F5',
+                  border: '1px solid #F3DADA',
+                  boxShadow: 'none',
+                  minHeight: 72
+                }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  {s.label}
+                </Typography>
+                <Typography fontWeight={800} color="#B71C1C">
+                  {s.value}
+                </Typography>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+
+        {/* ---------- SEARCH ---------- */}
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            fullWidth
+            size="small"
+            label="Search (தேடல்)"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            sx={{ mb: 1.5 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search />
+                </InputAdornment>
+              )
+            }}
+          />
+
+          <TextField
+            fullWidth
+            select
+            size="small"
+            label="Category (வகை)"
+            value={selectedCategory}
+            onChange={e => setSelectedCategory(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <FilterList />
+                </InputAdornment>
+              )
             }}
           >
-            Add New Customer (புதிய வாடிக்கையாளர்)
-          </Button>
+            {categories.map(c => (
+              <MenuItem key={c} value={c}>{c}</MenuItem>
+            ))}
+          </TextField>
         </Box>
 
-        {/* Stats Summary - No changes */}
-        {!isMobile && (
-          <Fade in timeout={500}>
-            <Grid container spacing={2} sx={{ mb: 4 }}>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: '#e8f5e9', borderRadius: 2 }}>
-                  <CardContent sx={{ p: 2 }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">
-                          Total Customers (மொத்தம்)
-                        </Typography>
-                        <Typography variant="h5" fontWeight="bold">
-                          {customers.length}
-                        </Typography>
-                      </Box>
-                      <Avatar sx={{ bgcolor: '#4caf50' }}>
-                        <Person />
-                      </Avatar>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: '#fff3e0', borderRadius: 2 }}>
-                  <CardContent sx={{ p: 2 }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">
-                          Pending (நிலுவை)
-                        </Typography>
-                        <Typography variant="h5" fontWeight="bold" color="warning.main">
-                          {customers.filter(c => c.balance > 0).length}
-                        </Typography>
-                      </Box>
-                      <Avatar sx={{ bgcolor: '#ff9800' }}>
-                        <Pending />
-                      </Avatar>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: '#f3e5f5', borderRadius: 2 }}>
-                  <CardContent sx={{ p: 2 }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">
-                          Total Debt (மொத்த கடன்)
-                        </Typography>
-                        <Typography variant="h5" fontWeight="bold" color="error.main">
-                          ₹{customers.reduce((sum, c) => sum + (c.balance || 0), 0).toFixed(2)}
-                        </Typography>
-                      </Box>
-                      <Avatar sx={{ bgcolor: '#9c27b0' }}>
-                        <AccountBalance />
-                      </Avatar>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card sx={{ bgcolor: '#e3f2fd', borderRadius: 2 }}>
-                  <CardContent sx={{ p: 2 }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">
-                          Today's Added (இன்று சேர்க்கப்பட்டது)
-                        </Typography>
-                        <Typography variant="h5" fontWeight="bold" color="primary.main">
-                          {customers.filter(c => {
-                            const today = new Date();
-                            const custDate = c.createdAt?.toDate();
-                            return custDate && custDate.toDateString() === today.toDateString();
-                          }).length}
-                        </Typography>
-                      </Box>
-                      <Avatar sx={{ bgcolor: '#2196f3' }}>
-                        <TrendingUp />
-                      </Avatar>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-          </Fade>
-        )}
+        {/* ---------- LIST ---------- */}
+        {filteredCustomers.map(c => (
+          <CustomerCard key={c.id} customer={c} />
+        ))}
 
-        {/* Search and Filter Section - No changes */}
-        <Paper 
-          elevation={1} 
-          sx={{ 
-            p: 3, 
-            mb: 4, 
-            borderRadius: 2,
-            bgcolor: '#f8f9fa'
-          }}
-        >
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Search by Name, Phone or Product (பெயர், தொலைபேசி அல்லது பொருள்)"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                size={isMobile ? "small" : "medium"}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search color="action" />
-                    </InputAdornment>
-                  ),
-                  sx: { borderRadius: 2 }
-                }}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                select
-                label="Filter by Category (வகையால் வடிகட்டு)"
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                size={isMobile ? "small" : "medium"}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <FilterList color="action" />
-                    </InputAdornment>
-                  ),
-                  sx: { borderRadius: 2 }
-                }}
-              >
-                {categories.map((cat) => (
-                  <MenuItem key={cat} value={cat}>
-                    {cat} {cat !== 'All' ? `(${cat})` : ''}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Grid>
-            <Grid item xs={12} md={2}>
-              <Button
-                fullWidth
-                variant="outlined"
-                startIcon={<Sort />}
-                onClick={() => {
-                  const sorted = [...filteredCustomers].sort((a, b) => b.balance - a.balance);
-                  setFilteredCustomers(sorted);
-                }}
-                sx={{ borderRadius: 2, height: '100%' }}
-              >
-                Sort (வரிசைப்படுத்து)
-              </Button>
-            </Grid>
-          </Grid>
-        </Paper>
-
-        {/* Customer List - Mobile Cards or Desktop Table */}
-        {isMobile ? (
-          // Mobile Card View
-          <Box>
-            {filteredCustomers.map((customer) => (
-              <CustomerCard key={customer.id} customer={customer} />
-            ))}
-          </Box>
-        ) : (
-          // Desktop Table View with clickable phone numbers
-          <TableContainer sx={{ borderRadius: 2, border: '1px solid #e0e0e0' }}>
-            <Table>
-              <TableHead sx={{ bgcolor: '#f5f5f5' }}>
-                <TableRow>
-                  <TableCell><strong>Customer Name (வாடிக்கையாளர் பெயர்)</strong></TableCell>
-                  <TableCell><strong>Phone (அலைபேசி)</strong></TableCell>
-                  <TableCell><strong>Product (பொருள்)</strong></TableCell>
-                  <TableCell><strong>Category (வகை)</strong></TableCell>
-                  <TableCell><strong>Total Amount (மொத்த தொகை)</strong></TableCell>
-                  <TableCell><strong>Balance (மீதி)</strong></TableCell>
-                  <TableCell><strong>Status (நிலை)</strong></TableCell>
-                  <TableCell><strong>Actions (செயல்கள்)</strong></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredCustomers.map((customer) => (
-                  <TableRow 
-                    key={customer.id} 
-                    hover 
-                    sx={{ 
-                      '&:hover': { bgcolor: '#fff8e1' },
-                      borderBottom: '1px solid #f0f0f0'
-                    }}
-                  >
-                    <TableCell>
-                      <Stack direction="row" alignItems="center" spacing={2}>
-                        <Avatar sx={{ bgcolor: '#d32f2f', width: 36, height: 36 }}>
-                          {getInitials(customer.customerName)}
-                        </Avatar>
-                        <Typography fontWeight="medium">
-                          {customer.customerName}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip title="Click to call (அழைக்க கிளிக் செய்யவும்)" arrow>
-                        <Button
-                          startIcon={<Phone fontSize="small" />}
-                          onClick={() => handlePhoneCall(customer.phone)}
-                          sx={{
-                            textTransform: 'none',
-                            color: 'primary.main',
-                            p: 0,
-                            minWidth: 'auto',
-                            '&:hover': {
-                              color: '#b71c1c',
-                              bgcolor: 'transparent'
-                            }
-                          }}
-                        >
-                          <Typography sx={{ 
-                            textDecoration: 'underline',
-                            fontWeight: 'medium'
-                          }}>
-                            {customer.phone}
-                          </Typography>
-                        </Button>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell>{customer.productName}</TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={customer.category} 
-                        size="small" 
-                        sx={{ 
-                          bgcolor: '#e3f2fd',
-                          color: '#1565c0',
-                          fontWeight: 'medium'
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography fontWeight="bold">
-                        ₹{customer.amount?.toFixed(2)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography
-                        fontWeight="bold"
-                        sx={{ 
-                          color: customer.balance > 0 ? '#d32f2f' : '#2e7d32',
-                          bgcolor: customer.balance > 0 ? '#ffebee' : '#e8f5e9',
-                          px: 2,
-                          py: 0.5,
-                          borderRadius: 1,
-                          display: 'inline-block'
-                        }}
-                      >
-                        ₹{customer.balance?.toFixed(2)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={customer.balance > 0 ? 'Pending (நிலுவை)' : 'Paid (செலுத்தப்பட்டது)'}
-                        color={getStatusColor(customer.balance)}
-                        size="small"
-                        icon={customer.balance > 0 ? <Pending /> : <CheckCircle />}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Stack direction="row" spacing={1}>
-                        <Tooltip title="View Details (விவரங்களைப் பார்க்க)" arrow>
-                          <IconButton
-                            component={RouterLink}
-                            to={`/list/${customer.id}`}
-                            color="primary"
-                            size="small"
-                            sx={{ 
-                              bgcolor: '#e3f2fd',
-                              '&:hover': { bgcolor: '#bbdefb' }
-                            }}
-                          >
-                            <Visibility />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Call Customer (வாடிக்கையாளரை அழைக்க)" arrow>
-                          <IconButton
-                            color="success"
-                            size="small"
-                            onClick={() => handlePhoneCall(customer.phone)}
-                            sx={{ 
-                              bgcolor: '#e8f5e9',
-                              '&:hover': { bgcolor: '#c8e6c9' }
-                            }}
-                          >
-                            <PhoneForwarded />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-
-        {/* No Results Message - No changes */}
         {filteredCustomers.length === 0 && (
-          <Box sx={{ textAlign: 'center', py: 6 }}>
-            <Store sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
-            <Typography variant="h6" color="text.secondary" gutterBottom>
-              No customers found (வாடிக்கையாளர்கள் எதுவும் கிடைக்கவில்லை)
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              {searchTerm || selectedCategory !== 'All' 
-                ? 'Try changing your search or filter criteria (உங்கள் தேடல் அல்லது வடிகட்டு அளவுகோல்களை மாற்றவும்)'
-                : 'Click "Add New Customer" to get started (தொடங்க "புதிய வாடிக்கையாளர்" என்பதைக் கிளிக் செய்யவும்)'}
-            </Typography>
-            <Button
-              component={RouterLink}
-              to="/entry"
-              variant="outlined"
-              color="primary"
-              startIcon={<PersonAdd />}
-            >
-              Add First Customer (முதல் வாடிக்கையாளரைச் சேர்க்கவும்)
-            </Button>
-          </Box>
-        )}
-
-        {/* Results Count - No changes */}
-        {filteredCustomers.length > 0 && (
-          <Box sx={{ mt: 3, textAlign: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              Showing {filteredCustomers.length} of {customers.length} customers 
-              (வாடிக்கையாளர்கள் {filteredCustomers.length} / {customers.length} காட்டப்படுகிறது)
+          <Box textAlign="center" py={5}>
+            <Typography color="text.secondary">
+              No customers found
             </Typography>
           </Box>
         )}

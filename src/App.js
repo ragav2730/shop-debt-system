@@ -6,32 +6,39 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './services/firebase';
 import { redTheme } from './styles/theme';
 
-// Components - Make sure each file exists and exports default
+// Components
 import Login from './components/Auth/Login';
 import Layout from './components/Layout/Layout';
 import PrivateRoute from './components/Auth/PrivateRoute';
 import OneTimeSetup from './components/Setup/OneTimeSetup';
+
+// Main Components
+import Dashboard from './components/Dashboard/Dashboard';
 import AddCustomer from './components/Entry/AddCustomer';
 import CustomerList from './components/List/CustomerList';
+import CustomerDetail from './components/List/CustomerDetail';
 import Payment from './components/Paid/Payment';
 import ProductPrice from './components/Price/ProductPrice';
 import AddUser from './components/Users/AddUser';
-import CustomerDetail from './components/List/CustomerDetail';
+
+// New Components for Customer Management
+import CustomerDetailsPage from './components/Customers/CustomerDetailsPage';
+import PDFGenerator from './components/Customers/PDFGenerator';
+import BillCustomizer from './components/Customers/BillCustomizer';
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [setupComplete, setSetupComplete] = useState(null); // Start as null
+  const [setupComplete, setSetupComplete] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       setLoading(false);
       
-      // Check setup completion AFTER auth state is known
+      // Check setup completion
       const isSetupComplete = localStorage.getItem('setupComplete');
       
-      // If user exists OR setup was previously marked complete
       if (user || isSetupComplete === 'true') {
         setSetupComplete(true);
       } else {
@@ -44,9 +51,18 @@ function App() {
 
   if (loading || setupComplete === null) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-      </Box>
+      <ThemeProvider theme={redTheme}>
+        <CssBaseline />
+        <Box 
+          display="flex" 
+          justifyContent="center" 
+          alignItems="center" 
+          minHeight="100vh"
+          sx={{ bgcolor: '#fafafa' }}
+        >
+          <CircularProgress color="primary" />
+        </Box>
+      </ThemeProvider>
     );
   }
 
@@ -55,28 +71,65 @@ function App() {
       <CssBaseline />
       <Router>
         <Routes>
-          {/* Only show setup if NOT complete AND no user */}
-          {!setupComplete && !user ? (
+          {/* Setup route - only accessible when setup is not complete and no user */}
+          {!setupComplete && !user && (
             <Route path="/setup" element={<OneTimeSetup />} />
-          ) : null}
+          )}
 
-          <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
-          
-          {/* Main app routes - accessible if user exists OR setup is complete */}
+          {/* Login route */}
+          <Route path="/login" element={
+            user ? <Navigate to="/" /> : <Login />
+          } />
+
+          {/* Protected routes */}
           <Route path="/" element={
             <PrivateRoute user={user}>
               <Layout />
             </PrivateRoute>
           }>
-            <Route index element={<CustomerList />} />
+            {/* Dashboard as default route */}
+            <Route index element={<Dashboard />} />
+            
+            {/* Customer Management Routes */}
+            <Route path="customers" element={<CustomerList />} />
+            <Route path="customers/:id" element={<CustomerDetailsPage />} />
+            
+            {/* Legacy routes for backward compatibility */}
             <Route path="entry" element={<AddCustomer />} />
             <Route path="list/:id" element={<CustomerDetail />} />
+            
+            {/* Payment & Transactions */}
             <Route path="paid" element={<Payment />} />
+            
+            {/* Product Management */}
             <Route path="price" element={<ProductPrice />} />
+            
+            {/* User Management */}
             <Route path="users" element={<AddUser />} />
+            
+            {/* PDF Generation & Customization */}
+            <Route path="generate-pdf" element={<PDFGenerator />} />
+            <Route path="customize-bill" element={<BillCustomizer />} />
+            
+            {/* Settings */}
+            <Route path="settings" element={
+              <Box sx={{ p: 3 }}>
+                <h2>Settings</h2>
+                <p>Settings page coming soon...</p>
+              </Box>
+            } />
+            
+            {/* About */}
+            <Route path="about" element={
+              <Box sx={{ p: 3 }}>
+                <h2>About Shop Debt System</h2>
+                <p>Version 2.0.0</p>
+                <p>Professional debt management system for small businesses.</p>
+              </Box>
+            } />
           </Route>
-          
-          {/* Redirect logic */}
+
+          {/* Catch-all redirect */}
           <Route path="*" element={
             !setupComplete && !user ? 
               <Navigate to="/setup" /> : 

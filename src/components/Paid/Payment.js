@@ -1,591 +1,407 @@
 import React, { useState, useEffect } from 'react';
 import {
   Container,
-  Paper,
   TextField,
   Button,
   Typography,
   Grid,
   Box,
   Alert,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Autocomplete,
-  MenuItem,
   Card,
   CardContent,
   Stack,
-  Divider,
-  Chip,
   Avatar,
   useTheme,
   useMediaQuery,
-  IconButton,
-  Tooltip,
+  CircularProgress,
+  Snackbar,
   Fade,
-  Slide
+  Paper,
+  ToggleButton,
+  ToggleButtonGroup
 } from '@mui/material';
-import { 
-  collection, 
-  query, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  doc, 
+
+import {
+  collection,
+  query,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  doc,
   serverTimestamp,
-  orderBy 
+  orderBy
 } from 'firebase/firestore';
+
 import { db } from '../../services/firebase';
+
 import {
   AccountBalanceWallet,
-  History,
   CheckCircle,
   AttachMoney,
   AccountBalance,
   CreditCard,
   Receipt,
   QrCode,
-  TrendingUp,
   Payment as PaymentIcon,
-  Person,
-  CalendarMonth,
-  MoreVert
+  Phone
 } from '@mui/icons-material';
+
+import { Link as RouterLink } from 'react-router-dom';
 
 const Payment = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isTablet = useMediaQuery(theme.breakpoints.down('lg'));
-  
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('Cash');
-  const [success, setSuccess] = useState(false);
-  const [paymentHistory, setPaymentHistory] = useState([]);
-  const [showSuccess, setShowSuccess] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
 
+  const [allPayments, setAllPayments] = useState([]);
+  const [paymentHistory, setPaymentHistory] = useState([]);
+
+  const [filter, setFilter] = useState('thisMonth');
+
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+
+  /* ================= FETCH DATA ================= */
   useEffect(() => {
-    const q = query(collection(db, 'customers'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const customersData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setCustomers(customersData.filter(c => c.balance > 0));
+    const q1 = query(collection(db, 'customers'));
+    const unsub1 = onSnapshot(q1, snap => {
+      setCustomers(
+        snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(c => c.balance > 0)
+      );
     });
 
-    const paymentsQ = query(collection(db, 'payments'), orderBy('date', 'desc'));
-    const unsubscribePayments = onSnapshot(paymentsQ, (snapshot) => {
-      const paymentsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setPaymentHistory(paymentsData.slice(0, 10));
+    const q2 = query(collection(db, 'payments'), orderBy('date', 'desc'));
+    const unsub2 = onSnapshot(q2, snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAllPayments(data);
     });
 
     return () => {
-      unsubscribe();
-      unsubscribePayments();
+      unsub1();
+      unsub2();
     };
   }, []);
 
+  /* ================= FILTER PAYMENTS ================= */
+  useEffect(() => {
+    const now = new Date();
+    let filtered = [];
+
+    if (filter === 'thisMonth') {
+      filtered = allPayments.filter(p => {
+        const d = p.date?.toDate();
+        return (
+          d &&
+          d.getMonth() === now.getMonth() &&
+          d.getFullYear() === now.getFullYear()
+        );
+      });
+    }
+
+    if (filter === 'lastMonth') {
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      filtered = allPayments.filter(p => {
+        const d = p.date?.toDate();
+        return (
+          d &&
+          d.getMonth() === lastMonth.getMonth() &&
+          d.getFullYear() === lastMonth.getFullYear()
+        );
+      });
+    }
+
+    if (filter === 'all') {
+      filtered = allPayments;
+    }
+
+    setPaymentHistory(filtered.slice(0, 20));
+  }, [filter, allPayments]);
+
+  /* ================= DATE FORMAT ================= */
+  const formatDate = timestamp => {
+    if (!timestamp) return '';
+    const d = timestamp.toDate();
+    return (
+      d.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      }) +
+      ' · ' +
+      d.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    );
+  };
+
+  /* ================= HANDLE PAYMENT ================= */
   const handlePayment = async () => {
     if (!selectedCustomer || !paymentAmount) return;
 
-    try {
-      const newBalance = selectedCustomer.balance - parseFloat(paymentAmount);
+    const amt = Number(paymentAmount);
+    if (amt <= 0 || amt > selectedCustomer.balance) {
+      setSnackbar({
+        open: true,
+        message: 'Invalid amount',
+        severity: 'error'
+      });
+      return;
+    }
 
-      // Update customer balance
+    setProcessingPayment(true);
+
+    try {
+      const newBalance = selectedCustomer.balance - amt;
+
       await updateDoc(doc(db, 'customers', selectedCustomer.id), {
         balance: newBalance,
-        status: newBalance > 0 ? 'pending' : 'paid'
+        status: newBalance > 0 ? 'pending' : 'paid',
+        lastPaymentDate: serverTimestamp()
       });
 
-      // Add payment record
       await addDoc(collection(db, 'payments'), {
         customerId: selectedCustomer.id,
         customerName: selectedCustomer.customerName,
-        amount: parseFloat(paymentAmount),
+        phone: selectedCustomer.phone,
+        amount: amt,
         paymentMode,
         previousBalance: selectedCustomer.balance,
         newBalance,
         date: serverTimestamp()
       });
 
-      setSuccess(true);
       setShowSuccess(true);
-      
+      setSnackbar({
+        open: true,
+        message: 'Payment recorded successfully',
+        severity: 'success'
+      });
+
       setTimeout(() => {
-        setShowSuccess(false);
         setSelectedCustomer(null);
         setPaymentAmount('');
-        setSuccess(false);
-      }, 3000);
-    } catch (error) {
-      console.error('Error processing payment:', error);
+        setProcessingPayment(false);
+        setShowSuccess(false);
+      }, 1500);
+    } catch {
+      setSnackbar({
+        open: true,
+        message: 'Payment failed',
+        severity: 'error'
+      });
+      setProcessingPayment(false);
     }
   };
 
-  const paymentModeIcons = {
-    'Cash': <AttachMoney fontSize="small" />,
-    'Bank Transfer': <AccountBalance fontSize="small" />,
-    'UPI': <QrCode fontSize="small" />,
-    'Cheque': <Receipt fontSize="small" />,
-    'Card': <CreditCard fontSize="small" />
-  };
-
-  const getPaymentModeColor = (mode) => {
-    const colors = {
-      'Cash': '#4caf50',
-      'Bank Transfer': '#2196f3',
-      'UPI': '#ff9800',
-      'Cheque': '#9c27b0',
-      'Card': '#f44336'
-    };
-    return colors[mode] || '#757575';
-  };
-
-  const PaymentMethodCard = ({ method, icon, color, isSelected, onClick }) => (
-    <Card 
-      elevation={isSelected ? 4 : 1}
-      onClick={onClick}
-      sx={{
-        cursor: 'pointer',
-        border: isSelected ? `2px solid ${color}` : '2px solid transparent',
-        transition: 'all 0.3s ease',
-        '&:hover': {
-          transform: 'translateY(-2px)',
-          boxShadow: 6
-        },
-        height: '100%',
-        backgroundColor: isSelected ? `${color}10` : 'white'
-      }}
-    >
-      <CardContent sx={{ textAlign: 'center', p: 2 }}>
-        <Box sx={{ color, mb: 1 }}>
-          {icon}
-        </Box>
-        <Typography variant="body2" fontWeight={isSelected ? 'bold' : 'normal'}>
-          {method}
-        </Typography>
-      </CardContent>
-    </Card>
-  );
+  const paymentModes = [
+    { label: 'Cash', icon: <AttachMoney /> },
+    { label: 'UPI', icon: <QrCode /> },
+    { label: 'Bank', icon: <AccountBalance /> },
+    { label: 'Card', icon: <CreditCard /> },
+    { label: 'Cheque', icon: <Receipt /> }
+  ];
 
   return (
-    <Container maxWidth="xl" sx={{ px: isMobile ? 1 : 3, py: isMobile ? 1 : 3 }}>
-      {/* Success Animation */}
+    <Box sx={{ bgcolor: '#F2F2F7', minHeight: '100vh', pb: isMobile ? 8 : 2 }}>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+      >
+        <Alert severity={snackbar.severity}>{snackbar.message}</Alert>
+      </Snackbar>
+
       <Fade in={showSuccess}>
-        <Box sx={{ position: 'fixed', top: 20, right: 20, zIndex: 9999 }}>
-          <Alert 
-            severity="success" 
-            icon={<CheckCircle fontSize="large" />}
-            sx={{ 
-              boxShadow: 6,
-              borderRadius: 2,
-              animation: 'slideIn 0.3s ease'
-            }}
-          >
-            <Typography fontWeight="bold">Payment Recorded Successfully!</Typography>
+        <Box sx={{ position: 'fixed', top: 16, left: 16, right: 16, zIndex: 999 }}>
+          <Alert icon={<CheckCircle />} severity="success">
+            Payment Successful
           </Alert>
         </Box>
       </Fade>
 
-      <Grid container spacing={3}>
-        {/* Left Column - Payment Form */}
-        <Grid item xs={12} lg={7}>
-          <Slide in direction="right" timeout={300}>
-            <Card 
-              elevation={3} 
-              sx={{ 
-                borderRadius: 3,
-                overflow: 'hidden',
-                height: '100%',
-                background: 'linear-gradient(135deg, #f5f5f5 0%, #ffffff 100%)'
+      <Container sx={{ py: 2 }}>
+        <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
+          Payment Collection
+        </Typography>
+
+        {/* PAYMENT FORM (UNCHANGED) */}
+        <Card sx={{ borderRadius: 4, mb: 3 }}>
+          <Box
+            sx={{
+              background: 'linear-gradient(135deg,#007AFF,#4DA3FF)',
+              color: '#fff',
+              p: 2.5,
+              borderRadius: '16px 16px 0 0'
+            }}
+          >
+            <Stack direction="row" spacing={1}>
+              <AccountBalanceWallet />
+              <Typography fontWeight={600}>Record Payment</Typography>
+            </Stack>
+          </Box>
+
+          <CardContent>
+            <Autocomplete
+              options={customers}
+              getOptionLabel={o => `${o.customerName} - ₹${o.balance}`}
+              value={selectedCustomer}
+              onChange={(_, v) => {
+                setSelectedCustomer(v);
+                setPaymentAmount('');
               }}
-            >
-              <Box sx={{ 
-                bgcolor: 'primary.main', 
-                p: 3, 
-                color: 'white',
-                background: 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)'
-              }}>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  <AccountBalanceWallet sx={{ fontSize: 32 }} />
+              renderInput={params => (
+                <TextField {...params} label="Select Customer" size="small" />
+              )}
+              renderOption={(props, option) => (
+                <Box component="li" {...props}>
+                  <Avatar sx={{ mr: 1 }}>{option.customerName[0]}</Avatar>
                   <Box>
-                    <Typography variant="h5" fontWeight="bold">
-                      Record Payment
-                    </Typography>
-                    <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                      Accept payments from customers with pending balances
-                    </Typography>
+                    <Typography>{option.customerName}</Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Phone sx={{ fontSize: 14 }} />
+                      <Typography variant="caption">{option.phone}</Typography>
+                    </Stack>
                   </Box>
-                </Stack>
-              </Box>
-
-              <CardContent sx={{ p: 4 }}>
-                {success && !showSuccess && (
-                  <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>
-                    Payment recorded successfully!
-                  </Alert>
-                )}
-
-                {/* Customer Selection */}
-                <Box sx={{ mb: 4 }}>
-                  <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
-                    Select Customer
-                  </Typography>
-                  <Autocomplete
-                    options={customers}
-                    getOptionLabel={(option) => `${option.customerName} - ₹${option.balance.toFixed(2)}`}
-                    value={selectedCustomer}
-                    onChange={(_, newValue) => {
-                      setSelectedCustomer(newValue);
-                      setPaymentAmount('');
-                    }}
-                    renderInput={(params) => (
-                      <TextField 
-                        {...params} 
-                        label="Search customer by name..." 
-                        fullWidth
-                        size={isMobile ? "small" : "medium"}
-                        sx={{ 
-                          '& .MuiOutlinedInput-root': {
-                            borderRadius: 2
-                          }
-                        }}
-                      />
-                    )}
-                    renderOption={(props, option) => (
-                      <Box component="li" {...props}>
-                        <Stack direction="row" alignItems="center" spacing={2} sx={{ width: '100%' }}>
-                          <Avatar sx={{ bgcolor: 'primary.light', width: 36, height: 36 }}>
-                            <Person fontSize="small" />
-                          </Avatar>
-                          <Box sx={{ flexGrow: 1 }}>
-                            <Typography variant="body1" fontWeight="medium">
-                              {option.customerName}
-                            </Typography>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                              <Typography variant="caption" color="text.secondary">
-                                {option.phone}
-                              </Typography>
-                              <Box sx={{ width: 4, height: 4, bgcolor: 'text.secondary', borderRadius: '50%' }} />
-                              <Typography variant="caption" color="error.main" fontWeight="bold">
-                                ₹{option.balance.toFixed(2)}
-                              </Typography>
-                            </Stack>
-                          </Box>
-                        </Stack>
-                      </Box>
-                    )}
-                  />
                 </Box>
+              )}
+            />
 
-                {/* Payment Details */}
-                {selectedCustomer && (
-                  <Slide in direction="up" timeout={400}>
-                    <Box>
-                      {/* Customer Info Card */}
-                      <Card variant="outlined" sx={{ mb: 4, borderRadius: 2 }}>
-                        <CardContent>
-                          <Stack direction={isMobile ? "column" : "row"} justifyContent="space-between" alignItems={isMobile ? "flex-start" : "center"}>
-                            <Stack direction="row" alignItems="center" spacing={2}>
-                              <Avatar sx={{ bgcolor: 'primary.main', width: 48, height: 48 }}>
-                                <Person />
-                              </Avatar>
-                              <Box>
-                                <Typography variant="h6" fontWeight="bold">
-                                  {selectedCustomer.customerName}
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  {selectedCustomer.phone}
-                                </Typography>
-                              </Box>
-                            </Stack>
-                            <Box sx={{ textAlign: isMobile ? 'left' : 'right', mt: isMobile ? 2 : 0 }}>
-                              <Typography variant="caption" color="text.secondary">
-                                Current Balance
-                              </Typography>
-                              <Typography variant="h4" color="error.main" fontWeight="bold">
-                                ₹{selectedCustomer.balance.toFixed(2)}
-                              </Typography>
-                            </Box>
-                          </Stack>
-                        </CardContent>
-                      </Card>
+            {selectedCustomer && (
+              <>
+                <TextField
+                  fullWidth
+                  label="Payment Amount"
+                  type="number"
+                  value={paymentAmount}
+                  onChange={e => setPaymentAmount(e.target.value)}
+                  sx={{ mt: 3 }}
+                />
 
-                      {/* Payment Form */}
-                      <Grid container spacing={3}>
-                        {/* Payment Amount */}
-                        <Grid item xs={12}>
-                          <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
-                            Payment Amount
-                          </Typography>
-                          <TextField
-                            fullWidth
-                            variant="outlined"
-                            type="number"
-                            value={paymentAmount}
-                            onChange={(e) => setPaymentAmount(e.target.value)}
-                            placeholder="Enter payment amount"
-                            size={isMobile ? "small" : "medium"}
-                            InputProps={{
-                              startAdornment: (
-                                <Box sx={{ mr: 1, color: 'primary.main' }}>
-                                  <AttachMoney />
-                                </Box>
-                              ),
-                              inputProps: { 
-                                max: selectedCustomer.balance,
-                                step: "0.01"
-                              },
-                              sx: { borderRadius: 2 }
-                            }}
-                            helperText={`Maximum: ₹${selectedCustomer.balance.toFixed(2)}`}
-                          />
-                        </Grid>
+                <Typography sx={{ mt: 3, mb: 1 }} fontWeight={600}>
+                  Payment Method
+                </Typography>
 
-                        {/* Payment Method */}
-                        <Grid item xs={12}>
-                          <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
-                            Payment Method
-                          </Typography>
-                          <Grid container spacing={2}>
-                            {['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Card'].map((method) => (
-                              <Grid item xs={6} sm={4} md={2.4} key={method}>
-                                <PaymentMethodCard
-                                  method={method}
-                                  icon={paymentModeIcons[method]}
-                                  color={getPaymentModeColor(method)}
-                                  isSelected={paymentMode === method}
-                                  onClick={() => setPaymentMode(method)}
-                                />
-                              </Grid>
-                            ))}
-                          </Grid>
-                        </Grid>
-
-                        {/* Submit Button */}
-                        <Grid item xs={12}>
-                          <Button
-                            fullWidth
-                            variant="contained"
-                            size="large"
-                            onClick={handlePayment}
-                            disabled={!paymentAmount || parseFloat(paymentAmount) <= 0 || parseFloat(paymentAmount) > selectedCustomer.balance}
-                            startIcon={<PaymentIcon />}
-                            sx={{
-                              py: 2,
-                              borderRadius: 2,
-                              background: 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)',
-                              fontSize: '1rem',
-                              fontWeight: 'bold',
-                              '&:hover': {
-                                background: 'linear-gradient(135deg, #b71c1c 0%, #8b0000 100%)',
-                                transform: 'translateY(-2px)',
-                                boxShadow: 6
-                              },
-                              transition: 'all 0.3s ease'
-                            }}
-                          >
-                            Record Payment of ₹{paymentAmount || '0.00'}
-                          </Button>
-                          
-                          {paymentAmount && selectedCustomer.balance - parseFloat(paymentAmount) > 0 && (
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
-                              Remaining balance after payment: ₹{(selectedCustomer.balance - parseFloat(paymentAmount)).toFixed(2)}
-                            </Typography>
-                          )}
-                        </Grid>
-                      </Grid>
-                    </Box>
-                  </Slide>
-                )}
-              </CardContent>
-            </Card>
-          </Slide>
-        </Grid>
-
-        {/* Right Column - Recent Payments */}
-        <Grid item xs={12} lg={5}>
-          <Slide in direction="left" timeout={300}>
-            <Card 
-              elevation={3} 
-              sx={{ 
-                borderRadius: 3,
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <Box sx={{ 
-                bgcolor: 'primary.dark', 
-                p: 3, 
-                color: 'white',
-                background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 100%)'
-              }}>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  <History sx={{ fontSize: 32 }} />
-                  <Box>
-                    <Typography variant="h5" fontWeight="bold">
-                      Recent Payments
-                    </Typography>
-                    <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                      Last 10 payment transactions
-                    </Typography>
-                  </Box>
-                </Stack>
-              </Box>
-
-              <CardContent sx={{ p: 3, flexGrow: 1, overflow: 'auto' }}>
-                {paymentHistory.length > 0 ? (
-                  <Stack spacing={2}>
-                    {paymentHistory.map((payment, index) => (
-                      <Card 
-                        key={payment.id} 
-                        variant="outlined"
-                        sx={{ 
-                          borderRadius: 2,
-                          borderLeft: `4px solid ${getPaymentModeColor(payment.paymentMode)}`,
-                          transition: 'all 0.2s ease',
-                          '&:hover': {
-                            transform: 'translateX(4px)',
-                            boxShadow: 2
-                          }
+                <Grid container spacing={1}>
+                  {paymentModes.map(m => (
+                    <Grid item xs={4} key={m.label}>
+                      <Card
+                        onClick={() => setPaymentMode(m.label)}
+                        sx={{
+                          textAlign: 'center',
+                          p: 1.5,
+                          borderRadius: 3,
+                          border:
+                            paymentMode === m.label
+                              ? '2px solid #007AFF'
+                              : '1px solid #ddd'
                         }}
                       >
-                        <CardContent sx={{ py: 2, px: 2 }}>
-                          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                            <Box sx={{ flexGrow: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                                <Avatar sx={{ 
-                                  width: 32, 
-                                  height: 32, 
-                                  bgcolor: `${getPaymentModeColor(payment.paymentMode)}20`,
-                                  color: getPaymentModeColor(payment.paymentMode)
-                                }}>
-                                  {paymentModeIcons[payment.paymentMode] || <PaymentIcon fontSize="small" />}
-                                </Avatar>
-                                <Box>
-                                  <Typography variant="subtitle2" fontWeight="bold">
-                                    {payment.customerName}
-                                  </Typography>
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <Chip 
-                                      label={payment.paymentMode}
-                                      size="small"
-                                      sx={{ 
-                                        height: 20, 
-                                        fontSize: '0.7rem',
-                                        bgcolor: `${getPaymentModeColor(payment.paymentMode)}20`,
-                                        color: getPaymentModeColor(payment.paymentMode)
-                                      }}
-                                    />
-                                    <Typography variant="caption" color="text.secondary">
-                                      {payment.date?.toDate().toLocaleDateString('en-IN', {
-                                        day: 'numeric',
-                                        month: 'short',
-                                        year: 'numeric'
-                                      })}
-                                    </Typography>
-                                  </Stack>
-                                </Box>
-                              </Stack>
-                              
-                              <Stack direction="row" justifyContent="space-between" alignItems="flex-end">
-                                <Box>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Previous Balance
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    ₹{payment.previousBalance?.toFixed(2) || '0.00'}
-                                  </Typography>
-                                </Box>
-                                <Box sx={{ textAlign: 'right' }}>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Payment Amount
-                                  </Typography>
-                                  <Typography variant="h6" color="success.main" fontWeight="bold">
-                                    ₹{payment.amount?.toFixed(2)}
-                                  </Typography>
-                                </Box>
-                              </Stack>
-                            </Box>
-                          </Stack>
-                        </CardContent>
+                        {m.icon}
+                        <Typography variant="caption">{m.label}</Typography>
                       </Card>
-                    ))}
-                  </Stack>
-                ) : (
-                  <Box sx={{ textAlign: 'center', py: 4 }}>
-                    <History sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-                    <Typography variant="h6" color="text.secondary" gutterBottom>
-                      No Recent Payments
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Payment records will appear here
-                    </Typography>
-                  </Box>
-                )}
-              </CardContent>
+                    </Grid>
+                  ))}
+                </Grid>
 
-              {/* Stats Footer */}
-              <Divider />
-              <Box sx={{ p: 2, bgcolor: 'grey.50' }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" color="text.secondary">
-                    Total Today: ₹{paymentHistory
-                      .filter(p => {
-                        const paymentDate = p.date?.toDate();
-                        const today = new Date();
-                        return paymentDate?.toDateString() === today.toDateString();
-                      })
-                      .reduce((sum, p) => sum + (p.amount || 0), 0)
-                      .toFixed(2)}
+                <Button
+                  fullWidth
+                  sx={{
+                    mt: 3,
+                    py: 1.5,
+                    borderRadius: 4,
+                    background: 'linear-gradient(135deg,#007AFF,#4DA3FF)'
+                  }}
+                  variant="contained"
+                  disabled={processingPayment}
+                  startIcon={
+                    processingPayment ? (
+                      <CircularProgress size={18} />
+                    ) : (
+                      <PaymentIcon />
+                    )
+                  }
+                  onClick={handlePayment}
+                >
+                  Record Payment
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ================= HISTORY FILTER ================= */}
+        <Typography fontWeight={700} sx={{ mb: 1 }}>
+          Payment History
+        </Typography>
+
+        <ToggleButtonGroup
+          size="small"
+          value={filter}
+          exclusive
+          onChange={(_, v) => v && setFilter(v)}
+          sx={{ mb: 2 }}
+        >
+          <ToggleButton value="thisMonth">This Month</ToggleButton>
+          <ToggleButton value="lastMonth">Last Month</ToggleButton>
+          <ToggleButton value="all">All</ToggleButton>
+        </ToggleButtonGroup>
+
+        {/* ================= PAYMENT HISTORY ================= */}
+        {paymentHistory.map(p => (
+          <Card key={p.id} sx={{ mb: 1.5, borderRadius: 3 }}>
+            <CardContent>
+              <Stack direction="row" justifyContent="space-between">
+                <Box>
+                  <Typography fontWeight={600}>{p.customerName}</Typography>
+                  <Typography variant="caption">
+                    {p.paymentMode} • {formatDate(p.date)}
                   </Typography>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <TrendingUp fontSize="small" color="success" />
-                    <Typography variant="body2" fontWeight="medium">
-                      {paymentHistory.length} transactions
-                    </Typography>
-                  </Stack>
-                </Stack>
-              </Box>
-            </Card>
-          </Slide>
-        </Grid>
-      </Grid>
+                </Box>
+                <Typography color="success.main" fontWeight={700}>
+                  ₹{p.amount}
+                </Typography>
+              </Stack>
+            </CardContent>
+          </Card>
+        ))}
+      </Container>
 
-      {/* Add CSS animations */}
-      <style jsx="true">{`
-        @keyframes slideIn {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-        
-        @keyframes pulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-          100% { transform: scale(1); }
-        }
-        
-        .pulse-animation {
-          animation: pulse 2s infinite;
-        }
-      `}</style>
-    </Container>
+      {/* BOTTOM NAV (MOBILE) */}
+      {isMobile && (
+        <Paper
+          elevation={5}
+          sx={{
+            position: 'fixed',
+            bottom: 0,
+            left: 8,
+            right: 8,
+            mb: 1,
+            borderRadius: 4
+          }}
+        >
+          <Stack direction="row" justifyContent="space-around" py={1}>
+            <Button component={RouterLink} to="/">Home</Button>
+            <Button component={RouterLink} to="/payment" sx={{ fontWeight: 700 }}>
+              Payment
+            </Button>
+            <Button component={RouterLink} to="/list">Customers</Button>
+          </Stack>
+        </Paper>
+      )}
+    </Box>
   );
 };
 

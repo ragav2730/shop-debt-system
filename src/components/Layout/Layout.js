@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import logo from '../assets/logo.jpg';
+// Remove or comment out the logo import
+// import logo from '../../assets/logo.jpg';
 import { 
   Box, 
   AppBar, 
@@ -26,10 +27,11 @@ import {
   Tooltip,
   Fade,
   LinearProgress,
-  Button  // ADD THIS IMPORT
+  Button,
+  Skeleton,
+  Alert
 } from '@mui/material';
 import { 
-  Home, 
   PersonAdd, 
   ListAlt, 
   Payment, 
@@ -45,25 +47,38 @@ import {
   Search,
   Dashboard,
   TrendingUp,
-  AccessTime,
-  Phone,
-  Store
+  Store,
+  PictureAsPdf,
+  ReceiptLong
 } from '@mui/icons-material';
 import { signOut } from 'firebase/auth';
-import { auth } from '../../services/firebase'; // FIXED PATH: Changed '../services' to '../../services'
+
+// CORRECT IMPORT PATH
+// Correct: Go up ONE level (to components), then to services
+import { auth, db } from '../../services/firebase';
+
+import { collection, query, onSnapshot, where, orderBy } from 'firebase/firestore';
 
 const drawerWidth = 240;
 
 const Layout = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isTablet = useMediaQuery(theme.breakpoints.down('lg'));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
   const [notificationsAnchor, setNotificationsAnchor] = useState(null);
   const [time, setTime] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [stats, setStats] = useState({
+    totalCustomers: 0,
+    pendingCustomers: 0,
+    totalDebt: 0,
+    recentPayments: 0,
+    recentTransactions: 0,
+    loading: true
+  });
+  const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -73,19 +88,209 @@ const Layout = () => {
     return () => clearInterval(timer);
   }, []);
 
+  // Fetch real customer data from Firebase
+  useEffect(() => {
+    let unsubscribeCustomers = null;
+    let unsubscribePayments = null;
+    let unsubscribeTransactions = null;
+
+    const fetchStats = async () => {
+      try {
+        // Fetch customers data
+        const customersQuery = query(collection(db, 'customers'));
+        unsubscribeCustomers = onSnapshot(customersQuery, (snapshot) => {
+          let totalCustomers = 0;
+          let pendingCustomers = 0;
+          let totalDebt = 0;
+
+          snapshot.forEach((doc) => {
+            const customer = doc.data();
+            totalCustomers++;
+            
+            const balance = customer.balance || 0;
+            if (balance > 0) {
+              pendingCustomers++;
+              totalDebt += balance;
+            }
+          });
+
+          setStats(prev => ({
+            ...prev,
+            totalCustomers,
+            pendingCustomers,
+            totalDebt,
+            loading: false
+          }));
+
+          generateNotifications(pendingCustomers, totalDebt);
+        });
+
+        // Fetch recent payments for today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const paymentsQuery = query(
+          collection(db, 'payments'),
+          where('date', '>=', today),
+          orderBy('date', 'desc')
+        );
+        
+        unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
+          let totalPaymentsToday = 0;
+          snapshot.forEach((doc) => {
+            totalPaymentsToday++;
+          });
+
+          setStats(prev => ({
+            ...prev,
+            recentPayments: totalPaymentsToday
+          }));
+        });
+
+        // Fetch recent transactions for today
+        const transactionsQuery = query(
+          collection(db, 'transactions'),
+          where('date', '>=', today),
+          orderBy('date', 'desc')
+        );
+        
+        unsubscribeTransactions = onSnapshot(transactionsQuery, (snapshot) => {
+          let totalTransactionsToday = 0;
+          snapshot.forEach((doc) => {
+            totalTransactionsToday++;
+          });
+
+          setStats(prev => ({
+            ...prev,
+            recentTransactions: totalTransactionsToday
+          }));
+        });
+
+      } catch (error) {
+        console.error('Error fetching stats:', error);
+        setStats(prev => ({ ...prev, loading: false }));
+      }
+    };
+
+    fetchStats();
+
+    return () => {
+      if (unsubscribeCustomers) unsubscribeCustomers();
+      if (unsubscribePayments) unsubscribePayments();
+      if (unsubscribeTransactions) unsubscribeTransactions();
+    };
+  }, []);
+
+  // Generate notifications
+  const generateNotifications = (pendingCount, totalDebt) => {
+    const today = new Date();
+    const formattedDate = today.toLocaleDateString('en-IN', { 
+      day: 'numeric', 
+      month: 'short' 
+    });
+    
+    const newNotifications = [];
+    
+    if (pendingCount > 0) {
+      newNotifications.push({
+        id: 1,
+        text: `${pendingCount} customer${pendingCount > 1 ? 's have' : ' has'} pending payments`,
+        time: 'Today',
+        type: 'payment',
+        icon: '⚠️',
+        action: () => navigate('/customers?filter=pending')
+      });
+    }
+
+    if (totalDebt > 0) {
+      const formattedDebt = formatLargeCurrency(totalDebt);
+      newNotifications.push({
+        id: 2,
+        text: `Total pending debt: ${formattedDebt}`,
+        time: 'Today',
+        type: 'debt',
+        icon: '💰',
+        action: () => navigate('/customers')
+      });
+    }
+
+    if (stats.recentPayments > 0) {
+      newNotifications.push({
+        id: 3,
+        text: `${stats.recentPayments} payment${stats.recentPayments > 1 ? 's' : ''} received today`,
+        time: 'Today',
+        type: 'payment',
+        icon: '✅',
+        action: () => navigate('/paid')
+      });
+    }
+
+    if (stats.recentTransactions > 0) {
+      newNotifications.push({
+        id: 4,
+        text: `${stats.recentTransactions} new sale${stats.recentTransactions > 1 ? 's' : ''} today`,
+        time: 'Today',
+        type: 'sale',
+        icon: '🛒',
+        action: () => navigate('/')
+      });
+    }
+
+    newNotifications.push({
+      id: 5,
+      text: `System running smoothly • ${formattedDate}`,
+      time: 'Just now',
+      type: 'system',
+      icon: '⚙️',
+      action: null
+    });
+
+    if (pendingCount > 0) {
+      newNotifications.push({
+        id: 6,
+        text: `Generate bills for ${pendingCount} pending customer${pendingCount > 1 ? 's' : ''}`,
+        time: 'Reminder',
+        type: 'pdf',
+        icon: '📄',
+        action: () => navigate('/customers')
+      });
+    }
+
+    setNotifications(newNotifications);
+  };
+
+  const formatCurrency = (amount) => {
+    if (amount >= 10000000) {
+      return `₹${(amount / 10000000).toFixed(1)}Cr`;
+    } else if (amount >= 100000) {
+      return `₹${(amount / 100000).toFixed(1)}L`;
+    } else if (amount >= 1000) {
+      return `₹${(amount / 1000).toFixed(1)}K`;
+    }
+    return `₹${amount.toFixed(0)}`;
+  };
+
+  const formatLargeCurrency = (amount) => {
+    if (amount === 0) return '₹0';
+    
+    const formatter = new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+    
+    return formatter.format(amount);
+  };
+
   const menuItems = [
     { text: 'Dashboard', icon: <Dashboard />, path: '/' },
     { text: 'Add Customer', icon: <PersonAdd />, path: '/entry' },
-    { text: 'Customer List', icon: <ListAlt />, path: '/' },
+    { text: 'Customer List', icon: <ListAlt />, path: '/customers' },
     { text: 'Payments', icon: <Payment />, path: '/paid' },
     { text: 'Product Prices', icon: <AttachMoney />, path: '/price' },
+    { text: 'Generate PDF', icon: <PictureAsPdf />, path: '/generate-pdf' },
     { text: 'Users', icon: <People />, path: '/users' },
-  ];
-
-  const notifications = [
-    { id: 1, text: 'Ramesh has ₹5,000 pending', time: '2 hours ago', type: 'payment' },
-    { id: 2, text: '3 customers added today', time: '4 hours ago', type: 'customer' },
-    { id: 3, text: 'Stock running low for Cement', time: '1 day ago', type: 'stock' },
   ];
 
   const handleDrawerToggle = () => {
@@ -115,10 +320,18 @@ const Layout = () => {
     setNotificationsAnchor(null);
   };
 
+  const handleNotificationClick = (notification) => {
+    if (notification.action) {
+      notification.action();
+    }
+    handleNotificationsClose();
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      localStorage.removeItem('isLoggedIn');
+      localStorage.removeItem('setupComplete');
+      localStorage.removeItem('billSettings');
       navigate('/login');
     } catch (error) {
       console.error('Logout error:', error);
@@ -127,7 +340,7 @@ const Layout = () => {
 
   const handleSearch = (e) => {
     if (e.key === 'Enter' && searchQuery.trim()) {
-      navigate(`/?search=${encodeURIComponent(searchQuery)}`);
+      navigate(`/customers?search=${encodeURIComponent(searchQuery)}`);
       setSearchQuery('');
     }
   };
@@ -154,12 +367,22 @@ const Layout = () => {
     if (currentItem) return currentItem.text;
     
     if (location.pathname.includes('/list/')) return 'Customer Details';
+    if (location.pathname.includes('/generate-pdf')) return 'PDF Generator';
+    
+    if (location.pathname === '/') return 'Dashboard';
+    
     return 'Dashboard';
+  };
+
+  const calculateProgress = () => {
+    if (stats.totalCustomers === 0) return 0;
+    const paidCustomers = stats.totalCustomers - stats.pendingCustomers;
+    return Math.round((paidCustomers / stats.totalCustomers) * 100);
   };
 
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Logo Section */}
+      {/* Logo Section - Updated with placeholder */}
       <Box 
         sx={{ 
           p: 3,
@@ -168,21 +391,27 @@ const Layout = () => {
           alignItems: 'center',
           justifyContent: 'center',
           bgcolor: 'rgba(211, 47, 47, 0.05)',
-          borderBottom: '1px solid rgba(211, 47, 47, 0.1)'
+          borderBottom: '1px solid rgba(211, 47, 47, 0.1)',
+          cursor: 'pointer',
+          '&:hover': {
+            bgcolor: 'rgba(211, 47, 47, 0.08)'
+          }
         }}
+        onClick={() => navigate('/')}
       >
-        <img
-          src={logo}
-          alt="Shop Debt System Logo"
-          style={{
-            width: '100%',
-            maxWidth: '160px',
-            height: 'auto',
-            objectFit: 'contain',
-            marginBottom: '12px',
-            borderRadius: '8px'
+        {/* Placeholder Logo using MUI Avatar */}
+        <Avatar
+          sx={{
+            width: 100,
+            height: 100,
+            mb: 2,
+            bgcolor: '#d32f2f',
+            fontSize: '2rem',
+            fontWeight: 'bold'
           }}
-        />
+        >
+          SD
+        </Avatar>
         <Typography 
           variant="subtitle1" 
           sx={{ 
@@ -210,8 +439,7 @@ const Layout = () => {
       <Box sx={{ flexGrow: 1, p: 2 }}>
         <List sx={{ py: 0 }}>
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path || 
-                            (item.path === '/' && location.pathname === '/');
+            const isActive = location.pathname === item.path;
             
             return (
               <ListItem 
@@ -259,33 +487,80 @@ const Layout = () => {
         </List>
       </Box>
 
-      {/* Bottom Section - Stats */}
+      {/* Bottom Section - Real Stats */}
       <Box sx={{ p: 2, bgcolor: 'rgba(211, 47, 47, 0.03)', borderTop: '1px solid rgba(211, 47, 47, 0.1)' }}>
         <Stack spacing={1}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="caption" color="text.secondary">
-              Active Customers
-            </Typography>
-            <Chip label="48" size="small" color="primary" sx={{ fontWeight: 'bold' }} />
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography variant="caption" color="text.secondary">
-              Pending Amount
-            </Typography>
-            <Chip label="₹2.4L" size="small" color="error" sx={{ fontWeight: 'bold' }} />
-          </Box>
-          <LinearProgress 
-            variant="determinate" 
-            value={65} 
-            sx={{ 
-              height: 6, 
-              borderRadius: 3,
-              bgcolor: 'rgba(211, 47, 47, 0.1)',
-              '& .MuiLinearProgress-bar': {
-                bgcolor: '#d32f2f'
-              }
-            }} 
-          />
+          {stats.loading ? (
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Skeleton width="60%" height={20} />
+                <Skeleton width="20%" height={32} />
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Skeleton width="60%" height={20} />
+                <Skeleton width="20%" height={32} />
+              </Box>
+              <Skeleton variant="rectangular" height={6} sx={{ borderRadius: 3 }} />
+            </>
+          ) : (
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="caption" color="text.secondary">
+                  Total Customers
+                </Typography>
+                <Chip 
+                  label={stats.totalCustomers} 
+                  size="small" 
+                  color="primary" 
+                  sx={{ fontWeight: 'bold' }} 
+                />
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="caption" color="text.secondary">
+                  Pending Customers
+                </Typography>
+                <Chip 
+                  label={stats.pendingCustomers} 
+                  size="small" 
+                  color="warning" 
+                  sx={{ fontWeight: 'bold' }} 
+                />
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="caption" color="text.secondary">
+                  Total Pending
+                </Typography>
+                <Chip 
+                  label={formatLargeCurrency(stats.totalDebt)} 
+                  size="small" 
+                  color="error" 
+                  sx={{ fontWeight: 'bold', fontSize: '0.75rem' }} 
+                />
+              </Box>
+              <Box sx={{ mt: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Collection Progress
+                  </Typography>
+                  <Typography variant="caption" fontWeight="bold" color="primary">
+                    {calculateProgress()}%
+                  </Typography>
+                </Box>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={calculateProgress()} 
+                  sx={{ 
+                    height: 6, 
+                    borderRadius: 3,
+                    bgcolor: 'rgba(211, 47, 47, 0.1)',
+                    '& .MuiLinearProgress-bar': {
+                      bgcolor: '#d32f2f'
+                    }
+                  }} 
+                />
+              </Box>
+            </>
+          )}
         </Stack>
       </Box>
     </Box>
@@ -340,7 +615,10 @@ const Layout = () => {
                   gap: 1
                 }}
               >
-                <Store sx={{ fontSize: { xs: 20, md: 24 } }} />
+                {getPageTitle() === 'PDF Generator' ? <PictureAsPdf sx={{ fontSize: { xs: 20, md: 24 } }} /> : 
+                 getPageTitle() === 'Customer List' ? <ListAlt sx={{ fontSize: { xs: 20, md: 24 } }} /> :
+                 getPageTitle() === 'Customer Details' ? <People sx={{ fontSize: { xs: 20, md: 24 } }} /> :
+                 <Store sx={{ fontSize: { xs: 20, md: 24 } }} />}
                 {getPageTitle()}
               </Typography>
               <Typography 
@@ -351,6 +629,7 @@ const Layout = () => {
                 }}
               >
                 {formatDate(time)} • {formatTime(time)}
+                {stats.pendingCustomers > 0 && ` • ${stats.pendingCustomers} pending`}
               </Typography>
             </Box>
 
@@ -409,7 +688,7 @@ const Layout = () => {
                   }}
                 >
                   <Badge 
-                    badgeContent={notifications.length} 
+                    badgeContent={notifications.filter(n => n.type !== 'system').length} 
                     color="error"
                     sx={{
                       '& .MuiBadge-badge': {
@@ -425,17 +704,21 @@ const Layout = () => {
               </Tooltip>
 
               {/* Quick Stats Chip */}
-              <Chip
-                icon={<TrendingUp />}
-                label="₹2.4L Pending"
-                size="small"
-                sx={{
-                  bgcolor: 'rgba(211, 47, 47, 0.1)',
-                  color: '#d32f2f',
-                  fontWeight: 'bold',
-                  display: { xs: 'none', sm: 'flex' }
-                }}
-              />
+              {!stats.loading && stats.totalDebt > 0 && (
+                <Chip
+                  icon={<TrendingUp />}
+                  label={formatCurrency(stats.totalDebt)}
+                  size="small"
+                  sx={{
+                    bgcolor: 'rgba(211, 47, 47, 0.1)',
+                    color: '#d32f2f',
+                    fontWeight: 'bold',
+                    display: { xs: 'none', sm: 'flex' }
+                  }}
+                  onClick={() => navigate('/customers')}
+                  clickable
+                />
+              )}
 
               {/* Theme Toggle */}
               <Tooltip title={darkMode ? "Light Mode" : "Dark Mode"} arrow>
@@ -449,6 +732,28 @@ const Layout = () => {
                   {darkMode ? <Brightness7 /> : <Brightness4 />}
                 </IconButton>
               </Tooltip>
+
+              {/* Quick PDF Button */}
+              {stats.pendingCustomers > 0 && !isMobile && (
+                <Tooltip title="Generate Bills for Pending Customers" arrow>
+                  <Button
+                    startIcon={<PictureAsPdf />}
+                    variant="contained"
+                    size="small"
+                    sx={{
+                      bgcolor: '#d32f2f',
+                      '&:hover': {
+                        bgcolor: '#b71c1c'
+                      },
+                      textTransform: 'none',
+                      fontWeight: 'bold'
+                    }}
+                    onClick={() => navigate('/generate-pdf')}
+                  >
+                    Generate Bills
+                  </Button>
+                </Tooltip>
+              )}
 
               {/* User Profile */}
               <Tooltip title="Account Settings" arrow>
@@ -491,12 +796,16 @@ const Layout = () => {
             >
               <Box sx={{ p: 2, borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
                 <Typography variant="subtitle1" fontWeight="bold">
-                  Notifications ({notifications.length})
+                  Notifications ({notifications.filter(n => n.type !== 'system').length})
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Based on your store data
                 </Typography>
               </Box>
-              {notifications.map((notification) => (
+              {notifications.filter(n => n.type !== 'system').map((notification) => (
                 <MenuItem 
                   key={notification.id} 
+                  onClick={() => handleNotificationClick(notification)}
                   sx={{ 
                     py: 1.5,
                     borderBottom: '1px solid rgba(0,0,0,0.05)',
@@ -504,18 +813,17 @@ const Layout = () => {
                   }}
                 >
                   <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
-                    <Avatar 
-                      sx={{ 
-                        width: 32, 
-                        height: 32, 
-                        mr: 2,
-                        bgcolor: notification.type === 'payment' ? '#d32f2f' : 
-                                notification.type === 'customer' ? '#1976d2' : '#ed6c02'
-                      }}
-                    >
-                      {notification.type === 'payment' ? '₹' : 
-                       notification.type === 'customer' ? '👤' : '📦'}
-                    </Avatar>
+                    <Box sx={{ 
+                      width: 32, 
+                      height: 32, 
+                      mr: 2,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1.2rem'
+                    }}>
+                      {notification.icon}
+                    </Box>
                     <Box sx={{ flexGrow: 1 }}>
                       <Typography variant="body2">
                         {notification.text}
@@ -527,13 +835,22 @@ const Layout = () => {
                   </Box>
                 </MenuItem>
               ))}
-              <Box sx={{ p: 2, textAlign: 'center' }}>
+              {notifications.length === 0 && (
+                <Box sx={{ p: 3, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    No notifications yet
+                  </Typography>
+                </Box>
+              )}
+              <Divider />
+              <Box sx={{ p: 1.5, textAlign: 'center' }}>
                 <Button 
                   size="small" 
                   color="primary"
                   onClick={handleNotificationsClose}
+                  sx={{ textTransform: 'none' }}
                 >
-                  Mark all as read
+                  Close
                 </Button>
               </Box>
             </Menu>
@@ -565,7 +882,7 @@ const Layout = () => {
                 <ListItemIcon><AccountCircle fontSize="small" /></ListItemIcon>
                 <ListItemText>Profile</ListItemText>
               </MenuItem>
-              <MenuItem onClick={handleMenuClose}>
+              <MenuItem onClick={() => { handleMenuClose(); navigate('/settings'); }}>
                 <ListItemIcon><Settings fontSize="small" /></ListItemIcon>
                 <ListItemText>Settings</ListItemText>
               </MenuItem>
@@ -637,6 +954,32 @@ const Layout = () => {
               minHeight: { xs: 64, sm: 72, md: 72 } 
             }} 
           />
+          
+          {/* PDF Generation Alert */}
+          {stats.pendingCustomers > 0 && location.pathname === '/' && (
+            <Alert 
+              severity="info" 
+              sx={{ 
+                mb: 2, 
+                borderRadius: 2,
+                bgcolor: 'rgba(211, 47, 47, 0.1)',
+                border: '1px solid rgba(211, 47, 47, 0.2)'
+              }}
+              action={
+                <Button 
+                  color="primary" 
+                  size="small" 
+                  startIcon={<PictureAsPdf />}
+                  onClick={() => navigate('/generate-pdf')}
+                >
+                  Generate Bills
+                </Button>
+              }
+            >
+              You have {stats.pendingCustomers} customer{stats.pendingCustomers > 1 ? 's' : ''} with pending payments. 
+              Generate bills to send reminders.
+            </Alert>
+          )}
           
           <Container 
             maxWidth="xl" 
