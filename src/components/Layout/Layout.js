@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-// Remove or comment out the logo import
-// import logo from '../../assets/logo.jpg';
 import { 
   Box, 
   AppBar, 
@@ -49,14 +47,14 @@ import {
   TrendingUp,
   Store,
   PictureAsPdf,
-  ReceiptLong
+  ReceiptLong,
+  // ADD THESE NEW ICONS
+  Groups,
+  ShoppingCart,
+  Receipt
 } from '@mui/icons-material';
 import { signOut } from 'firebase/auth';
-
-// CORRECT IMPORT PATH
-// Correct: Go up ONE level (to components), then to services
 import { auth, db } from '../../services/firebase';
-
 import { collection, query, onSnapshot, where, orderBy } from 'firebase/firestore';
 
 const drawerWidth = 240;
@@ -232,7 +230,7 @@ const Layout = () => {
         time: 'Today',
         type: 'sale',
         icon: '🛒',
-        action: () => navigate('/')
+        action: () => navigate('/purchases')
       });
     }
 
@@ -283,11 +281,13 @@ const Layout = () => {
     return formatter.format(amount);
   };
 
+  // UPDATED MENU ITEMS - Added new premium pages
   const menuItems = [
     { text: 'Dashboard', icon: <Dashboard />, path: '/' },
     { text: 'Add Customer', icon: <PersonAdd />, path: '/entry' },
-    { text: 'Customer List', icon: <ListAlt />, path: '/customers' },
+    { text: 'Customer List', icon: <ListAlt />, path: '/list' },
     { text: 'Payments', icon: <Payment />, path: '/paid' },
+    { text: 'Purchase History', icon: <ShoppingCart />, path: '/purchases' },
     { text: 'Product Prices', icon: <AttachMoney />, path: '/price' },
     { text: 'Generate PDF', icon: <PictureAsPdf />, path: '/generate-pdf' },
     { text: 'Users', icon: <People />, path: '/users' },
@@ -368,10 +368,24 @@ const Layout = () => {
     
     if (location.pathname.includes('/list/')) return 'Customer Details';
     if (location.pathname.includes('/generate-pdf')) return 'PDF Generator';
+    if (location.pathname.includes('/customers/')) return 'Customer Details';
+    if (location.pathname.includes('/purchases/')) return 'Purchase Details';
     
     if (location.pathname === '/') return 'Dashboard';
     
     return 'Dashboard';
+  };
+
+  const getPageIcon = () => {
+    const currentItem = menuItems.find(item => item.path === location.pathname);
+    if (currentItem) return currentItem.icon;
+    
+    if (location.pathname.includes('/customers/')) return <Groups />;
+    if (location.pathname.includes('/purchases/')) return <ShoppingCart />;
+    if (location.pathname.includes('/list/')) return <People />;
+    if (location.pathname.includes('/generate-pdf')) return <PictureAsPdf />;
+    
+    return <Store />;
   };
 
   const calculateProgress = () => {
@@ -382,7 +396,7 @@ const Layout = () => {
 
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Logo Section - Updated with placeholder */}
+      {/* Logo Section */}
       <Box 
         sx={{ 
           p: 3,
@@ -399,7 +413,6 @@ const Layout = () => {
         }}
         onClick={() => navigate('/')}
       >
-        {/* Placeholder Logo using MUI Avatar */}
         <Avatar
           sx={{
             width: 100,
@@ -439,7 +452,12 @@ const Layout = () => {
       <Box sx={{ flexGrow: 1, p: 2 }}>
         <List sx={{ py: 0 }}>
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = location.pathname === item.path || 
+                           (item.path === '/customers' && location.pathname.includes('/customers/')) ||
+                           (item.path === '/purchases' && location.pathname.includes('/purchases/'));
+            
+            // Add premium badge for new pages
+            const isPremiumPage = item.path === '/customers' || item.path === '/purchases';
             
             return (
               <ListItem 
@@ -455,7 +473,8 @@ const Layout = () => {
                   '&:hover': {
                     backgroundColor: isActive ? 'rgba(211, 47, 47, 0.15)' : 'rgba(211, 47, 47, 0.08)',
                   },
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  position: 'relative'
                 }}
               >
                 <ListItemIcon sx={{ 
@@ -465,12 +484,33 @@ const Layout = () => {
                   {item.icon}
                 </ListItemIcon>
                 <ListItemText 
-                  primary={item.text}
-                  primaryTypographyProps={{
-                    fontSize: { xs: '0.875rem', md: '0.95rem' },
-                    fontWeight: isActive ? 'bold' : 'medium',
-                    color: isActive ? '#d32f2f' : 'text.primary'
-                  }}
+                  primary={
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Typography 
+                        sx={{
+                          fontSize: { xs: '0.875rem', md: '0.95rem' },
+                          fontWeight: isActive ? 'bold' : 'medium',
+                          color: isActive ? '#d32f2f' : 'text.primary'
+                        }}
+                      >
+                        {item.text}
+                      </Typography>
+                      {isPremiumPage && !isActive && (
+                        <Chip
+                          label="New"
+                          size="small"
+                          sx={{
+                            height: 16,
+                            fontSize: '0.6rem',
+                            bgcolor: 'rgba(76, 175, 80, 0.1)',
+                            color: '#4CAF50',
+                            fontWeight: 'bold',
+                            ml: 1
+                          }}
+                        />
+                      )}
+                    </Box>
+                  }
                 />
                 {isActive && (
                   <Box sx={{ 
@@ -615,11 +655,23 @@ const Layout = () => {
                   gap: 1
                 }}
               >
-                {getPageTitle() === 'PDF Generator' ? <PictureAsPdf sx={{ fontSize: { xs: 20, md: 24 } }} /> : 
-                 getPageTitle() === 'Customer List' ? <ListAlt sx={{ fontSize: { xs: 20, md: 24 } }} /> :
-                 getPageTitle() === 'Customer Details' ? <People sx={{ fontSize: { xs: 20, md: 24 } }} /> :
-                 <Store sx={{ fontSize: { xs: 20, md: 24 } }} />}
+                {getPageIcon()}
                 {getPageTitle()}
+                {/* Show premium badge for new pages */}
+                {(location.pathname === '/customers' || location.pathname === '/purchases') && (
+                  <Chip
+                    label="Premium"
+                    size="small"
+                    sx={{
+                      height: 20,
+                      fontSize: '0.65rem',
+                      bgcolor: 'rgba(76, 175, 80, 0.1)',
+                      color: '#4CAF50',
+                      fontWeight: 'bold',
+                      ml: 1
+                    }}
+                  />
+                )}
               </Typography>
               <Typography 
                 variant="caption" 
@@ -751,6 +803,30 @@ const Layout = () => {
                     onClick={() => navigate('/generate-pdf')}
                   >
                     Generate Bills
+                  </Button>
+                </Tooltip>
+              )}
+
+              {/* Quick Purchase Button */}
+              {!isMobile && (
+                <Tooltip title="Add New Purchase" arrow>
+                  <Button
+                    startIcon={<Receipt />}
+                    variant="outlined"
+                    size="small"
+                    sx={{
+                      borderColor: '#4CAF50',
+                      color: '#4CAF50',
+                      '&:hover': {
+                        borderColor: '#388E3C',
+                        bgcolor: 'rgba(76, 175, 80, 0.04)'
+                      },
+                      textTransform: 'none',
+                      fontWeight: 'bold'
+                    }}
+                    onClick={() => navigate('/purchases')}
+                  >
+                    View Purchases
                   </Button>
                 </Tooltip>
               )}
@@ -954,6 +1030,21 @@ const Layout = () => {
               minHeight: { xs: 64, sm: 72, md: 72 } 
             }} 
           />
+          
+          {/* New Features Announcement */}
+          {(location.pathname === '/' || location.pathname === '/customers' || location.pathname === '/purchases') && (
+            <Alert 
+              severity="info" 
+              sx={{ 
+                mb: 2, 
+                borderRadius: 2,
+                bgcolor: 'rgba(76, 175, 80, 0.1)',
+                border: '1px solid rgba(76, 175, 80, 0.2)'
+              }}
+            >
+              <strong>New Premium Features Available!</strong> Check out the new Customers and Purchase History pages with premium iOS-style design.
+            </Alert>
+          )}
           
           {/* PDF Generation Alert */}
           {stats.pendingCustomers > 0 && location.pathname === '/' && (

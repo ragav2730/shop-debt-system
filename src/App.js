@@ -21,10 +21,14 @@ import Payment from './components/Paid/Payment';
 import ProductPrice from './components/Price/ProductPrice';
 import AddUser from './components/Users/AddUser';
 
-// New Components for Customer Management
+// Customer Management Components
 import CustomerDetailsPage from './components/Customers/CustomerDetailsPage';
 import PDFGenerator from './components/Customers/PDFGenerator';
 import BillCustomizer from './components/Customers/BillCustomizer';
+
+// Purchase Management (Keep this if you want it)
+import PurchasesPage from './components/Purchases/PurchasesPage';
+import PurchaseDetails from './components/Purchases/PurchaseDetails';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -94,8 +98,13 @@ function App() {
             <Route path="customers" element={<CustomerList />} />
             <Route path="customers/:id" element={<CustomerDetailsPage />} />
             
+            {/* Purchase Management Routes (Optional - keep if you want) */}
+            <Route path="purchases" element={<PurchasesPage />} />
+            <Route path="purchases/:id" element={<PurchaseDetails />} />
+            
             {/* Legacy routes for backward compatibility */}
             <Route path="entry" element={<AddCustomer />} />
+            <Route path="list" element={<CustomerList />} />
             <Route path="list/:id" element={<CustomerDetail />} />
             
             {/* Payment & Transactions */}

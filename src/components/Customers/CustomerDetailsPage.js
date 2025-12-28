@@ -1,7 +1,4 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import pdfService from '../../services/pdfService';
-import { formatCurrency, formatIndianDate, safeText, getPDFSettings } from '../../utils/pdfUtils';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -98,15 +95,26 @@ import {
 
 import { db } from '../../services/firebase';
 
-// Initialize jsPDF
-let jsPDF;
+// FIX FOR PDF GARBLED TEXT - Add this at the top AFTER imports
+const initializePDF = async () => {
+  if (typeof window !== 'undefined' && !window.jsPDF) {
+    try {
+      const jsPDFModule = await import('jspdf');
+      window.jsPDF = jsPDFModule.default;
+    } catch (error) {
+      console.error('Failed to load jsPDF:', error);
+    }
+  }
+};
 
-// Dynamically import jsPDF to avoid SSR issues
-if (typeof window !== 'undefined') {
-  import('jspdf').then(module => {
-    jsPDF = module.default;
-  });
-}
+// Call it immediately
+initializePDF();
+
+// Helper function to ensure PDF is ready
+const getPDF = () => {
+  if (typeof window === 'undefined') return null;
+  return window.jsPDF;
+};
 
 // Bill Customizer Component
 const BillCustomizer = ({ open, onClose, onSave, currentSettings }) => {
@@ -520,12 +528,24 @@ const CustomerDetailsPage = () => {
     if (!timestamp) return 'N/A';
     try {
       if (timestamp.toDate) {
-        return timestamp.toDate().toLocaleDateString('en-IN');
+        return timestamp.toDate().toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        });
       }
       if (timestamp instanceof Date) {
-        return timestamp.toLocaleDateString('en-IN');
+        return timestamp.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        });
       }
-      return new Date(timestamp).toLocaleDateString('en-IN');
+      return new Date(timestamp).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      });
     } catch (error) {
       return 'Invalid Date';
     }
@@ -550,13 +570,14 @@ const CustomerDetailsPage = () => {
     };
   };
 
-  // FIXED: Generate Simple PDF with proper font encoding
+  // Generate Simple PDF with proper font encoding
   const generateSimpleBill = () => {
+    const jsPDF = getPDF();
     if (!customer || !jsPDF) return null;
 
     const stats = calculateStats();
     const settings = {
-      companyName: 'AVR Shop Debt System',
+      companyName: 'Shop Debt System',
       companyAddress: '123 Main Street, Chennai',
       companyPhone: '+91 9876543210',
       footerText: 'Thank you for your business!',
@@ -571,24 +592,24 @@ const CustomerDetailsPage = () => {
         compress: true
       });
       
-      // Set font BEFORE adding any text
-      doc.setFont('helvetica', 'normal');
+      // Set font BEFORE adding any text - Use standard font
+      doc.setFont('helvetica');
       doc.setFontSize(18);
       doc.setTextColor(211, 47, 47);
-      doc.text('BILL', 105, 20, null, null, 'center');
+      doc.text('BILL', 105, 20, { align: 'center' });
       
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
-      doc.text(settings.companyName, 105, 28, null, null, 'center');
-      doc.text(settings.companyPhone, 105, 34, null, null, 'center');
+      doc.text(settings.companyName, 105, 28, { align: 'center' });
+      doc.text(settings.companyPhone, 105, 34, { align: 'center' });
 
       // Customer Info
       doc.setFontSize(12);
       doc.setTextColor(40, 40, 40);
       
-      // Ensure customer name is a string
-      const customerName = String(customer.customerName || 'N/A');
-      const phone = String(customer.phone || 'N/A');
+      // Ensure all text is properly formatted
+      const customerName = customer.customerName || 'N/A';
+      const phone = customer.phone || 'N/A';
       
       doc.text(`Customer: ${customerName}`, 20, 45);
       doc.text(`Phone: ${phone}`, 20, 52);
@@ -605,21 +626,21 @@ const CustomerDetailsPage = () => {
       const balanceDue = `₹${stats.remainingBalance.toFixed(2)}`;
       
       doc.text('Total Amount:', 25, yPos);
-      doc.text(totalAmount, 150, yPos, null, null, 'right');
+      doc.text(totalAmount, 150, yPos, { align: 'right' });
       
       doc.text('Paid Amount:', 25, yPos + 8);
-      doc.text(paidAmount, 150, yPos + 8, null, null, 'right');
+      doc.text(paidAmount, 150, yPos + 8, { align: 'right' });
       
       doc.text('Balance Due:', 25, yPos + 16);
-      doc.text(balanceDue, 150, yPos + 16, null, null, 'right');
+      doc.text(balanceDue, 150, yPos + 16, { align: 'right' });
 
       yPos += 35;
 
       // Footer
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
-      doc.text('Thank you for your business!', 105, yPos, null, null, 'center');
-      doc.text('This is a computer generated bill', 105, yPos + 6, null, null, 'center');
+      doc.text('Thank you for your business!', 105, yPos, { align: 'center' });
+      doc.text('This is a computer generated bill', 105, yPos + 6, { align: 'center' });
 
       return doc;
     } catch (error) {
@@ -628,8 +649,9 @@ const CustomerDetailsPage = () => {
     }
   };
 
-  // FIXED: Generate Detailed Bill with proper font encoding
+  // Generate Detailed Bill with proper font encoding
   const generateDetailedBill = () => {
+    const jsPDF = getPDF();
     if (!customer || !jsPDF) return null;
 
     const stats = calculateStats();
@@ -651,30 +673,30 @@ const CustomerDetailsPage = () => {
       });
       
       // Set font
-      doc.setFont('helvetica', 'normal');
+      doc.setFont('helvetica');
       
       // Header
       doc.setFontSize(20);
       doc.setTextColor(211, 47, 47);
-      doc.text(settings.companyName, 105, 20, null, null, 'center');
+      doc.text(settings.companyName, 105, 20, { align: 'center' });
       
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
-      doc.text(settings.companyAddress, 105, 28, null, null, 'center');
-      doc.text(`Phone: ${settings.companyPhone} | Email: ${settings.companyEmail}`, 105, 34, null, null, 'center');
-      doc.text(settings.gstNumber, 105, 40, null, null, 'center');
+      doc.text(settings.companyAddress, 105, 28, { align: 'center' });
+      doc.text(`Phone: ${settings.companyPhone} | Email: ${settings.companyEmail}`, 105, 34, { align: 'center' });
+      doc.text(settings.gstNumber, 105, 40, { align: 'center' });
 
       // Bill Info
       doc.setFontSize(16);
       doc.setTextColor(40, 40, 40);
-      doc.text('CUSTOMER BILL STATEMENT', 105, 50, null, null, 'center');
+      doc.text('CUSTOMER BILL STATEMENT', 105, 50, { align: 'center' });
 
       // Customer Info
       let yPos = 60;
       doc.setFontSize(12);
-      doc.text(`Customer: ${String(customer.customerName || 'N/A')}`, 20, yPos);
+      doc.text(`Customer: ${customer.customerName || 'N/A'}`, 20, yPos);
       yPos += 8;
-      doc.text(`Phone: ${String(customer.phone || 'N/A')}`, 20, yPos);
+      doc.text(`Phone: ${customer.phone || 'N/A'}`, 20, yPos);
       yPos += 8;
       doc.text(`Balance: ₹${stats.remainingBalance.toFixed(2)}`, 20, yPos);
       yPos += 12;
@@ -691,7 +713,7 @@ const CustomerDetailsPage = () => {
             yPos = 20;
           }
           doc.setFontSize(10);
-          const productName = String(t.productName || 'Product');
+          const productName = t.productName || 'Product';
           doc.text(`${formatDate(t.date)} - ${productName}: ₹${(t.amount || 0).toFixed(2)}`, 20, yPos);
           yPos += 6;
         });
@@ -714,7 +736,7 @@ const CustomerDetailsPage = () => {
             yPos = 20;
           }
           doc.setFontSize(10);
-          const paymentMode = String(p.paymentMode || 'Cash');
+          const paymentMode = p.paymentMode || 'Cash';
           doc.text(`${formatDate(p.date)} - ${paymentMode}: ₹${(p.amount || 0).toFixed(2)}`, 20, yPos);
           yPos += 6;
         });
@@ -744,8 +766,8 @@ const CustomerDetailsPage = () => {
       // Footer
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
-      doc.text(settings.footerText, 105, yPos, null, null, 'center');
-      doc.text(`Generated on: ${new Date().toLocaleString('en-IN')}`, 105, yPos + 6, null, null, 'center');
+      doc.text(settings.footerText, 105, yPos, { align: 'center' });
+      doc.text(`Generated on: ${new Date().toLocaleString('en-IN')}`, 105, yPos + 6, { align: 'center' });
 
       return doc;
     } catch (error) {
@@ -754,11 +776,79 @@ const CustomerDetailsPage = () => {
     }
   };
 
+  // Handle Send Bill Only (without PDF generation)
+  const handleSendBillOnly = async () => {
+    if (!customer) return;
+    
+    setGeneratingPDF(true);
+    
+    try {
+      const stats = calculateStats();
+      
+      // Format purchase history
+      let purchaseHistory = '';
+      if (transactions.length > 0) {
+        purchaseHistory = '*Purchase History:*\n';
+        transactions.forEach((t, index) => {
+          const date = formatDate(t.date);
+          const product = t.productName || 'Product';
+          const amount = t.amount || 0;
+          purchaseHistory += `${index + 1}. ${date} - ${product}: ₹${amount.toFixed(2)}\n`;
+        });
+      } else {
+        purchaseHistory = '*Purchase History:* No purchases found\n';
+      }
+      
+      // Format payment history
+      let paymentHistory = '';
+      if (payments.length > 0) {
+        paymentHistory = '*Payment History:*\n';
+        payments.forEach((p, index) => {
+          const date = formatDate(p.date);
+          const mode = p.paymentMode || 'Cash';
+          const amount = p.amount || 0;
+          const notes = p.notes ? ` (${p.notes})` : '';
+          paymentHistory += `${index + 1}. ${date} - ${mode}: ₹${amount.toFixed(2)}${notes}\n`;
+        });
+      } else {
+        paymentHistory = '*Payment History:* No payments made\n';
+      }
+      
+      // Create comprehensive message
+      const message = encodeURIComponent(
+        `*BILL STATEMENT FOR ${customer.customerName.toUpperCase()}*\n\n` +
+        `📱 Phone: ${customer.phone || 'N/A'}\n` +
+        `📅 Generated on: ${new Date().toLocaleDateString('en-IN')}\n\n` +
+        `💰 *ACCOUNT SUMMARY*\n` +
+        `Total Purchases: ₹${stats.totalPurchases.toFixed(2)}\n` +
+        `Total Payments: ₹${stats.totalPayments.toFixed(2)}\n` +
+        `Current Balance: ₹${stats.remainingBalance.toFixed(2)}\n` +
+        `Status: ${stats.remainingBalance > 0 ? 'PENDING ⚠️' : 'PAID ✅'}\n\n` +
+        `${purchaseHistory}\n` +
+        `${paymentHistory}\n` +
+        `_Generated from Shop Debt System_\n` +
+        `_This is an automated message_`
+      );
+      
+      // Open WhatsApp with pre-filled message
+      window.open(`https://wa.me/?text=${message}`, '_blank');
+      
+      showSnackbar('Bill sent to WhatsApp successfully!', 'success');
+      
+    } catch (error) {
+      console.error('Error sending bill:', error);
+      showSnackbar('Failed to send bill. Please try again.', 'error');
+    } finally {
+      setGeneratingPDF(false);
+      handleMenuClose();
+    }
+  };
+
   // Handle PDF Generation
   const handleGeneratePDF = async (type = 'detailed') => {
     if (!customer) return;
     
-    // Wait for jsPDF to load if not already loaded
+    const jsPDF = getPDF();
     if (!jsPDF) {
       showSnackbar('PDF library loading, please try again...', 'warning');
       return;
@@ -784,7 +874,7 @@ const CustomerDetailsPage = () => {
         // Download the PDF
         const downloadLink = document.createElement('a');
         downloadLink.href = pdfUrl;
-        downloadLink.download = `${String(customer.customerName).replace(/\s+/g, '_')}_${
+        downloadLink.download = `${customer.customerName.replace(/\s+/g, '_')}_${
           type === 'detailed' ? 'Detailed_Bill' : 'Bill'
         }_${Date.now()}.pdf`;
         
@@ -795,20 +885,57 @@ const CustomerDetailsPage = () => {
         // Prepare WhatsApp message
         setTimeout(() => {
           const stats = calculateStats();
+          
+          // Format purchase history
+          let purchaseHistory = '';
+          if (transactions.length > 0) {
+            purchaseHistory = '*Purchase History:*\n';
+            transactions.forEach((t, index) => {
+              const date = formatDate(t.date);
+              const product = t.productName || 'Product';
+              const amount = t.amount || 0;
+              purchaseHistory += `${index + 1}. ${date} - ${product}: ₹${amount.toFixed(2)}\n`;
+            });
+          } else {
+            purchaseHistory = '*Purchase History:* No purchases found\n';
+          }
+          
+          // Format payment history
+          let paymentHistory = '';
+          if (payments.length > 0) {
+            paymentHistory = '*Payment History:*\n';
+            payments.forEach((p, index) => {
+              const date = formatDate(p.date);
+              const mode = p.paymentMode || 'Cash';
+              const amount = p.amount || 0;
+              const notes = p.notes ? ` (${p.notes})` : '';
+              paymentHistory += `${index + 1}. ${date} - ${mode}: ₹${amount.toFixed(2)}${notes}\n`;
+            });
+          } else {
+            paymentHistory = '*Payment History:* No payments made\n';
+          }
+          
+          // Create comprehensive message
           const message = encodeURIComponent(
-            `*${type === 'detailed' ? 'Detailed Bill' : 'Bill'} for ${customer.customerName}*\n\n` +
+            `*BILL STATEMENT FOR ${customer.customerName.toUpperCase()}*\n\n` +
+            `📱 Phone: ${customer.phone || 'N/A'}\n` +
+            `📅 Generated on: ${new Date().toLocaleDateString('en-IN')}\n\n` +
+            `💰 *ACCOUNT SUMMARY*\n` +
             `Total Purchases: ₹${stats.totalPurchases.toFixed(2)}\n` +
             `Total Payments: ₹${stats.totalPayments.toFixed(2)}\n` +
-            `Balance Due: ₹${stats.remainingBalance.toFixed(2)}\n\n` +
-            `Phone: ${customer.phone || 'N/A'}\n` +
-            `Generated from Shop Debt System`
+            `Current Balance: ₹${stats.remainingBalance.toFixed(2)}\n` +
+            `Status: ${stats.remainingBalance > 0 ? 'PENDING ⚠️' : 'PAID ✅'}\n\n` +
+            `${purchaseHistory}\n` +
+            `${paymentHistory}\n` +
+            `_Generated from Shop Debt System_\n` +
+            `_This is an automated message_`
           );
           
           // Open WhatsApp with pre-filled message
           window.open(`https://wa.me/?text=${message}`, '_blank');
         }, 1000);
         
-        showSnackbar(`${type === 'detailed' ? 'Detailed' : 'Simple'} bill generated successfully!`, 'success');
+        showSnackbar(`${type === 'detailed' ? 'Detailed bill' : 'Bill'} generated and sent to WhatsApp!`, 'success');
       } else {
         showSnackbar('Failed to generate PDF', 'error');
       }
@@ -1378,8 +1505,8 @@ const CustomerDetailsPage = () => {
             <Description fontSize="small" />
           </ListItemIcon>
           <ListItemText 
-            primary="Detailed Bill with History"
-            secondary="Complete transaction history"
+            primary="Download Detailed Bill"
+            secondary="PDF with complete history"
           />
         </MenuItem>
         
@@ -1388,8 +1515,19 @@ const CustomerDetailsPage = () => {
             <Receipt fontSize="small" />
           </ListItemIcon>
           <ListItemText 
-            primary="Simple Bill"
-            secondary="Current balance summary"
+            primary="Download Simple Bill"
+            secondary="Current balance summary PDF"
+          />
+        </MenuItem>
+        
+        {/* NEW: Send Bill Only option */}
+        <MenuItem onClick={handleSendBillOnly} disabled={generatingPDF}>
+          <ListItemIcon>
+            <WhatsApp fontSize="small" />
+          </ListItemIcon>
+          <ListItemText 
+            primary="Send Bill via WhatsApp"
+            secondary="Share complete history without PDF"
           />
         </MenuItem>
         
