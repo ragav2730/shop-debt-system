@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import {
   Card,
   CardContent,
@@ -8,219 +8,360 @@ import {
   Box,
   Chip,
   IconButton,
-  alpha,
+  LinearProgress,
   useTheme,
-  LinearProgress
+  useMediaQuery
 } from '@mui/material';
 import {
   ArrowForwardIos,
   ShoppingBag,
   Person,
   CalendarToday,
-  AccountBalance,
-  Payment
+  CheckCircle,
+  PendingActions,
+  TrendingUp
 } from '@mui/icons-material';
 
-const PurchaseCard = ({ purchase, onClick }) => {
+const PurchaseCard = memo(({ purchase, onClick, isMobile = false }) => {
   const theme = useTheme();
-  const isPaid = (purchase.remainingAmount || 0) <= 0;
-  const paidAmount = (purchase.amount || 0) - (purchase.remainingAmount || 0);
-  const paymentPercentage = purchase.amount > 0 ? (paidAmount / purchase.amount) * 100 : 100;
+  const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  /* -------------------- PROPER PAYMENT CALCULATIONS WITH REAL-TIME UPDATES -------------------- */
+  // IMPORTANT: This should receive updated purchase data from parent component
+  // The parent (PurchasesPage) should update purchase data when payments change
+  
+  // Calculate remaining amount - prioritize real-time calculated values
+  const remaining = purchase.calculatedRemaining !== undefined 
+    ? purchase.calculatedRemaining 
+    : typeof purchase.remainingAmount === 'number'
+      ? purchase.remainingAmount
+      : purchase.amount || 0;
+
+  // Calculate total paid - use updated value from parent
+  const totalPaid = purchase.totalPaid !== undefined 
+    ? purchase.totalPaid 
+    : (purchase.amount || 0) - remaining;
+
+  const isPaid = remaining === 0 && (purchase.amount || 0) > 0;
+  const isPartial = totalPaid > 0 && remaining > 0;
+  const isUnpaid = totalPaid === 0 && (purchase.amount || 0) > 0;
+  
+  const paymentPercentage = (purchase.amount || 0) > 0 
+    ? Math.min(100, (totalPaid / (purchase.amount || 1)) * 100)
+    : 100;
+
+  /* -------------------- FORMATTERS -------------------- */
   const formatDate = (dateInput) => {
     if (!dateInput) return 'N/A';
     try {
       if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-        return dateInput.toDate().toLocaleDateString('en-IN');
+        return dateInput.toDate().toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short'
+        });
       }
-      return new Date(dateInput).toLocaleDateString('en-IN');
+      const date = new Date(dateInput);
+      return date.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short'
+      });
     } catch {
-      return 'Invalid Date';
+      return 'N/A';
     }
   };
 
-  const getProductColor = (productName) => {
-    const colors = [
-      '#FF6B6B', '#4ECDC4', '#FFD166', '#06D6A0', '#118AB2',
-      '#EF476F', '#FFD166', '#06D6A0', '#073B4C', '#7209B7'
-    ];
-    const index = productName?.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    return colors[index % colors.length];
+  const formatCurrency = (amount) => {
+    if (!amount && amount !== 0) return '₹0';
+    return `₹${Math.round(amount).toLocaleString('en-IN')}`;
   };
 
+  const getStatusColor = () => {
+    if (isPaid) return '#34C759'; // iOS Green
+    if (isPartial) return '#FF9500'; // iOS Orange
+    return '#FF3B30'; // iOS Red
+  };
+
+  const getStatusText = () => {
+    if (isPaid) return 'PAID';
+    if (isPartial) return 'PARTIAL';
+    return 'PENDING';
+  };
+
+  const getStatusIcon = () => {
+    if (isPaid) return <CheckCircle sx={{ fontSize: 14 }} />;
+    if (isPartial) return <TrendingUp sx={{ fontSize: 14 }} />;
+    return <PendingActions sx={{ fontSize: 14 }} />;
+  };
+
+  /* -------------------- CARD STYLE -------------------- */
+  const getCardStyle = () => {
+    const baseStyle = {
+      borderRadius: 12,
+      border: '1px solid rgba(0,0,0,0.08)',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+      backgroundColor: '#FFFFFF',
+      overflow: 'hidden',
+      marginBottom: 8,
+      transition: 'all 0.2s ease',
+      cursor: 'pointer',
+      '&:hover': {
+        boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+        borderColor: 'rgba(0,0,0,0.12)',
+        transform: 'translateY(-1px)'
+      }
+    };
+
+    if (isMobile) {
+      return {
+        ...baseStyle,
+        '&:active': {
+          transform: 'scale(0.995)',
+          backgroundColor: 'rgba(0,0,0,0.01)'
+        }
+      };
+    }
+    
+    return baseStyle;
+  };
+
+  /* -------------------- REGULAR CARD SIZE (DEFAULT) -------------------- */
   return (
-    <Card
+    <Card 
       onClick={onClick}
-      sx={{
-        borderRadius: 3,
-        bgcolor: alpha(theme.palette.background.paper, 0.6),
-        backdropFilter: 'blur(10px)',
-        border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
-        cursor: 'pointer',
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        '&:hover': {
-          transform: 'translateY(-2px)',
-          borderColor: alpha(theme.palette.primary.main, 0.3),
-          boxShadow: '0 12px 24px rgba(0,0,0,0.2)',
-          bgcolor: alpha(theme.palette.background.paper, 0.8)
-        },
-        position: 'relative',
-        overflow: 'hidden'
-      }}
+      sx={getCardStyle()}
+      elevation={0}
     >
-      {/* Status Indicator */}
-      <Box
-        sx={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: 4,
-          height: '100%',
-          bgcolor: isPaid ? '#4CAF50' : '#FFA726',
-          borderTopLeftRadius: 12,
-          borderBottomLeftRadius: 12
-        }}
-      />
-      
-      <CardContent sx={{ p: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center">
-          {/* Product Avatar */}
-          <Avatar
-            sx={{
-              width: 56,
-              height: 56,
-              bgcolor: getProductColor(purchase.productName),
-              fontSize: 20,
-              fontWeight: 700
-            }}
-          >
-            <ShoppingBag />
-          </Avatar>
-          
-          {/* Purchase Info */}
-          <Box sx={{ flex: 1 }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-              <Box>
-                <Typography variant="h6" fontWeight={600} gutterBottom>
+      <CardContent sx={{ p: 2.5, pb: '20px !important' }}>
+        <Stack spacing={1.5}>
+          {/* Header Row - Product & Amount */}
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ flex: 1 }}>
+              <Avatar
+                sx={{
+                  width: 44,
+                  height: 44,
+                  backgroundColor: isPaid ? '#34C759' : isPartial ? '#FF9500' : '#FF3B30',
+                  color: 'white',
+                  fontSize: 18,
+                  fontWeight: 600
+                }}
+              >
+                <ShoppingBag />
+              </Avatar>
+              
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography
+                  sx={{
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: '#1D1D1F',
+                    mb: 0.5,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
                   {purchase.productName || 'Unnamed Product'}
                 </Typography>
                 
-                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
-                  {purchase.customerName && (
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      <Person sx={{ fontSize: 14, color: 'text.secondary' }} />
-                      <Typography variant="caption" color="text.secondary">
-                        {purchase.customerName}
-                      </Typography>
-                    </Stack>
-                  )}
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      color: '#8E8E93',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.5
+                    }}
+                  >
+                    <CalendarToday sx={{ fontSize: 11 }} />
+                    {formatDate(purchase.date)}
+                  </Typography>
                   
-                  {purchase.date && (
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      <CalendarToday sx={{ fontSize: 14, color: 'text.secondary' }} />
-                      <Typography variant="caption" color="text.secondary">
-                        {formatDate(purchase.date)}
-                      </Typography>
-                    </Stack>
+                  {purchase.customerName && (
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: '#8E8E93',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        maxWidth: '120px'
+                      }}
+                    >
+                      <Person sx={{ fontSize: 11 }} />
+                      {purchase.customerName}
+                    </Typography>
                   )}
                 </Stack>
               </Box>
-              
-              {/* Amount */}
-              <Stack alignItems="flex-end" spacing={0.5}>
-                <Typography variant="h6" fontWeight={700} color="primary.main">
-                  ₹{(purchase.amount || 0).toLocaleString('en-IN')}
-                </Typography>
-                
-                {!isPaid && (
-                  <Typography variant="caption" color="error.main" fontWeight={600}>
-                    Pending: ₹{(purchase.remainingAmount || 0).toLocaleString('en-IN')}
-                  </Typography>
-                )}
-                
-                <Chip
-                  label={isPaid ? 'PAID' : 'PENDING'}
-                  size="small"
-                  sx={{
-                    bgcolor: isPaid ? 
-                      alpha(theme.palette.success.main, 0.1) : 
-                      alpha(theme.palette.warning.main, 0.1),
-                    color: isPaid ? theme.palette.success.main : theme.palette.warning.main,
-                    fontWeight: 600,
-                    fontSize: '0.7rem',
-                    height: 20
-                  }}
-                />
-              </Stack>
             </Stack>
-            
-            {/* Payment Progress */}
-            {!isPaid && (
-              <Box sx={{ mt: 2 }}>
-                <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Payment Progress
-                  </Typography>
-                  <Typography variant="caption" fontWeight={600} color="primary.main">
-                    {paymentPercentage.toFixed(0)}%
-                  </Typography>
-                </Stack>
-                
-                <LinearProgress
-                  variant="determinate"
-                  value={paymentPercentage}
-                  sx={{
-                    height: 6,
-                    borderRadius: 3,
-                    bgcolor: alpha(theme.palette.primary.main, 0.1),
-                    '& .MuiLinearProgress-bar': {
-                      borderRadius: 3,
-                      background: 'linear-gradient(90deg, #4CAF50 0%, #8BC34A 100%)'
-                    }
-                  }}
-                />
-                
-                <Stack direction="row" justifyContent="space-between" sx={{ mt: 0.5 }}>
-                  <Typography variant="caption" color="success.main">
-                    Paid: ₹{paidAmount.toLocaleString('en-IN')}
-                  </Typography>
-                  <Typography variant="caption" color="warning.main">
-                    Due: ₹{(purchase.remainingAmount || 0).toLocaleString('en-IN')}
-                  </Typography>
-                </Stack>
-              </Box>
-            )}
-            
-            {/* Description */}
-            {purchase.description && (
+
+            {/* Status & Amount */}
+            <Stack alignItems="flex-end" spacing={0.5} sx={{ ml: 1 }}>
               <Typography
-                variant="caption"
-                color="text.secondary"
                 sx={{
-                  mt: 1,
-                  display: 'block',
-                  fontStyle: 'italic'
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: '#1D1D1F'
                 }}
               >
-                {purchase.description}
+                {formatCurrency(purchase.amount || 0)}
               </Typography>
-            )}
+              
+              <Chip
+                icon={getStatusIcon()}
+                label={getStatusText()}
+                size="small"
+                sx={{
+                  height: 22,
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  backgroundColor: `${getStatusColor()}15`,
+                  color: getStatusColor(),
+                  border: `1px solid ${getStatusColor()}30`,
+                  '& .MuiChip-icon': {
+                    marginLeft: 0.5,
+                    color: getStatusColor()
+                  }
+                }}
+              />
+            </Stack>
+          </Stack>
+
+          {/* Payment Progress Bar */}
+          <Box sx={{ mt: 0.5 }}>
+            <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+              <Typography sx={{ fontSize: 11, color: '#8E8E93', fontWeight: 500 }}>
+                Payment Progress
+              </Typography>
+              <Typography sx={{ fontSize: 11, color: '#007AFF', fontWeight: 600 }}>
+                {paymentPercentage.toFixed(0)}%
+              </Typography>
+            </Stack>
+            
+            <LinearProgress
+              variant="determinate"
+              value={paymentPercentage}
+              sx={{
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: 'rgba(0,0,0,0.08)',
+                '& .MuiLinearProgress-bar': {
+                  borderRadius: 2,
+                  backgroundColor: isPaid ? '#34C759' : '#007AFF',
+                  transition: 'width 0.3s ease'
+                }
+              }}
+            />
           </Box>
-          
-          {/* Arrow */}
-          <IconButton
-            size="small"
-            sx={{
-              color: 'text.secondary',
-              '&:hover': { color: 'primary.main' }
-            }}
-          >
-            <ArrowForwardIos sx={{ fontSize: 16 }} />
-          </IconButton>
+
+          {/* Amount Details */}
+          <Stack direction="row" spacing={1.5}>
+            <Box sx={{ 
+              flex: 1, 
+              p: 1.5, 
+              backgroundColor: '#F8F8FA',
+              borderRadius: 8,
+              textAlign: 'center'
+            }}>
+              <Typography sx={{ fontSize: 10, color: '#8E8E93', mb: 0.5, fontWeight: 500 }}>
+                Paid
+              </Typography>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#34C759' }}>
+                {formatCurrency(totalPaid)}
+              </Typography>
+            </Box>
+            
+            <Box sx={{ 
+              flex: 1, 
+              p: 1.5, 
+              backgroundColor: '#F8F8FA',
+              borderRadius: 8,
+              textAlign: 'center'
+            }}>
+              <Typography sx={{ fontSize: 10, color: '#8E8E93', mb: 0.5, fontWeight: 500 }}>
+                Balance
+              </Typography>
+              <Typography sx={{ 
+                fontSize: 14, 
+                fontWeight: 700, 
+                color: remaining > 0 ? '#FF3B30' : '#34C759'
+              }}>
+                {formatCurrency(remaining)}
+              </Typography>
+            </Box>
+            
+            <Box sx={{ 
+              flex: 1, 
+              p: 1.5, 
+              backgroundColor: '#F8F8FA',
+              borderRadius: 8,
+              textAlign: 'center'
+            }}>
+              <Typography sx={{ fontSize: 10, color: '#8E8E93', mb: 0.5, fontWeight: 500 }}>
+                Status
+              </Typography>
+              <Typography sx={{ 
+                fontSize: 11, 
+                fontWeight: 700, 
+                color: getStatusColor(),
+                textTransform: 'uppercase'
+              }}>
+                {getStatusText()}
+              </Typography>
+            </Box>
+          </Stack>
+
+          {/* Description */}
+          {purchase.description && (
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: '#8E8E93',
+                lineHeight: 1.4,
+                mt: 0.5,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical'
+              }}
+            >
+              {purchase.description}
+            </Typography>
+          )}
+
+          {/* Footer with Payment Count */}
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
+            <Typography sx={{ fontSize: 11, color: '#8E8E93' }}>
+              {purchase.paymentCount || 0} payment{purchase.paymentCount !== 1 ? 's' : ''}
+            </Typography>
+            
+            <IconButton
+              size="small"
+              sx={{
+                color: '#C7C7CC',
+                p: 0.5,
+                '&:hover': { 
+                  color: '#007AFF',
+                  backgroundColor: 'rgba(0,122,255,0.1)'
+                }
+              }}
+            >
+              <ArrowForwardIos sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Stack>
         </Stack>
       </CardContent>
     </Card>
   );
-};
+});
+
+// Add display name for debugging
+PurchaseCard.displayName = 'PurchaseCard';
 
 export default PurchaseCard;

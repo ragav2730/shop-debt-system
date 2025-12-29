@@ -17,7 +17,13 @@ import {
   ListItemText,
   useTheme,
   useMediaQuery,
-  Alert
+  Alert,
+  Grid,
+  Chip,
+  Fab,
+  BottomNavigation,
+  BottomNavigationAction,
+  Paper
 } from '@mui/material';
 import {
   Add,
@@ -27,7 +33,11 @@ import {
   ArrowDownward,
   ArrowUpward,
   Refresh,
-  Warning
+  Warning,
+  Search,
+  FilterList,
+  ViewList,
+  Dashboard
 } from '@mui/icons-material';
 import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -42,6 +52,8 @@ const PurchasesPage = () => {
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.between('sm', 'md'));
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
 
   const [purchases, setPurchases] = useState([]);
   const [filteredPurchases, setFilteredPurchases] = useState([]);
@@ -53,6 +65,7 @@ const PurchasesPage = () => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [error, setError] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [mobileView, setMobileView] = useState('list'); // 'list' or 'stats'
 
   const [stats, setStats] = useState({
     totalPurchases: 0,
@@ -87,48 +100,30 @@ const PurchasesPage = () => {
         setPayments(paymentsData);
 
         // Enrich purchases with payment calculations
-        const enrichedPurchases = purchasesData.map(purchase => {
-          // Find payments for this purchase
-          const purchasePayments = paymentsData.filter(
-            payment => payment.transactionId === purchase.id
-          );
-          
-          // Calculate total paid for this purchase
-          const totalPaidForPurchase = purchasePayments.reduce(
-            (sum, payment) => sum + (payment.amount || 0),
-            0
-          );
-          
-          // Calculate remaining amount
-          const purchaseAmount = purchase.amount || 0;
-          let remainingAmount = purchaseAmount - totalPaidForPurchase;
-          
-          // If purchase has remainingAmount field, use it, but validate with payments
-          if (typeof purchase.remainingAmount === 'number') {
-            // Use the lower of calculated remaining or stored remaining
-            remainingAmount = Math.min(remainingAmount, purchase.remainingAmount);
-          }
-          
-          // Ensure remaining amount is not negative
-          remainingAmount = Math.max(0, remainingAmount);
-          
-          // Determine status
-          let status = 'pending';
-          if (remainingAmount === 0 && purchaseAmount > 0) {
-            status = 'paid';
-          } else if (totalPaidForPurchase > 0 && remainingAmount > 0) {
-            status = 'partial';
-          }
-          
-          return {
-            ...purchase,
-            totalPaid: totalPaidForPurchase,
-            remainingAmount: remainingAmount,
-            calculatedRemaining: remainingAmount,
-            status: status,
-            paymentCount: purchasePayments.length
-          };
-        });
+   // In PurchasesPage.js, when fetching data, ensure you're calculating and passing:
+const enrichedPurchases = purchasesData.map(purchase => {
+  // Calculate real-time payment data
+  const purchasePayments = paymentsData.filter(
+    payment => payment.transactionId === purchase.id
+  );
+  
+  const totalPaidForPurchase = purchasePayments.reduce(
+    (sum, payment) => sum + (payment.amount || 0),
+    0
+  );
+  
+  const purchaseAmount = purchase.amount || 0;
+  let calculatedRemaining = purchaseAmount - totalPaidForPurchase;
+  
+  return {
+    ...purchase,
+    totalPaid: totalPaidForPurchase, // CRITICAL: Pass this
+    calculatedRemaining: Math.max(0, calculatedRemaining), // CRITICAL: Pass this
+    paymentCount: purchasePayments.length, // CRITICAL: Pass this
+    status: calculatedRemaining === 0 ? 'paid' : 
+            totalPaidForPurchase > 0 ? 'partial' : 'pending'
+  };
+});
 
         setPurchases(enrichedPurchases);
         setFilteredPurchases(enrichedPurchases);
@@ -213,21 +208,13 @@ const PurchasesPage = () => {
         
         switch (statusFilter) {
           case 'pending':
-            // Pending: Has remaining amount, no payments or partial payments
             return remaining > 0;
-          
           case 'paid':
-            // Paid: No remaining amount AND has some amount
             return remaining === 0 && amount > 0;
-          
           case 'partial':
-            // Partially paid: Has payments but still has remaining amount
             return p.status === 'partial';
-          
           case 'unpaid':
-            // Unpaid: No payments made at all
             return (p.paymentCount || 0) === 0 && amount > 0;
-          
           default:
             return true;
         }
@@ -243,22 +230,18 @@ const PurchasesPage = () => {
           aValue = new Date(a.date?.toDate?.() || a.date || 0);
           bValue = new Date(b.date?.toDate?.() || b.date || 0);
           break;
-        
         case 'amount':
           aValue = a.amount || 0;
           bValue = b.amount || 0;
           break;
-        
         case 'remaining':
           aValue = a.calculatedRemaining || 0;
           bValue = b.calculatedRemaining || 0;
           break;
-        
         case 'customer':
           aValue = a.customerName?.toLowerCase() || '';
           bValue = b.customerName?.toLowerCase() || '';
           break;
-        
         default:
           aValue = 0;
           bValue = 0;
@@ -268,7 +251,6 @@ const PurchasesPage = () => {
         ? bValue > aValue ? 1 : -1
         : aValue > bValue ? 1 : -1;
       
-      // If equal, sort by date
       if (comparison === 0) {
         const aDate = new Date(a.date?.toDate?.() || a.date || 0);
         const bDate = new Date(b.date?.toDate?.() || b.date || 0);
@@ -296,71 +278,459 @@ const PurchasesPage = () => {
     window.location.reload();
   };
 
+  const formatCurrency = (amount) => {
+    if (amount >= 10000000) {
+      return `₹${(amount / 10000000).toFixed(1)}Cr`;
+    } else if (amount >= 100000) {
+      return `₹${(amount / 100000).toFixed(1)}L`;
+    } else if (amount >= 1000) {
+      return `₹${(amount / 1000).toFixed(1)}K`;
+    }
+    return `₹${amount.toFixed(0)}`;
+  };
+
   /* -------------------- LOADING -------------------- */
   if (loading) {
     return (
-      <Box sx={{ p: 2, minHeight: '100vh', bgcolor: '#f5f7fb' }}>
-        <Box
-          sx={{
-            bgcolor: PRIMARY_BLUE,
-            px: 2,
-            py: 3,
-            borderBottomLeftRadius: 24,
-            borderBottomRightRadius: 24
-          }}
-        >
-          <Typography
-            fontSize={isMobile ? 22 : 26}
-            fontWeight={700}
-            color="white"
+      <Box sx={{ 
+        minHeight: '100vh', 
+        bgcolor: '#f5f7fb',
+        pt: isMobile ? '56px' : '64px'
+      }}>
+        {/* Mobile Top Bar */}
+        {isMobile && (
+          <Box
+            sx={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bgcolor: PRIMARY_BLUE,
+              py: 2,
+              px: 2,
+              zIndex: 1100
+            }}
           >
-            Purchase History
-          </Typography>
-          <Typography color="rgba(255,255,255,0.9)" fontSize={14}>
-            Loading...
-          </Typography>
-        </Box>
-        
-        <Container maxWidth="sm" sx={{ mt: 3 }}>
-          {[1, 2, 3, 4].map(i => (
+            <Typography
+              fontSize={18}
+              fontWeight={700}
+              color="white"
+            >
+              Purchase History
+            </Typography>
+          </Box>
+        )}
+
+        <Box sx={{ p: 2 }}>
+          <Skeleton 
+            variant="rectangular" 
+            height={isMobile ? 100 : 150} 
+            sx={{ 
+              borderRadius: 3, 
+              mb: 2,
+              bgcolor: 'rgba(0,0,0,0.08)'
+            }} 
+          />
+          
+          {[1, 2, 3].map(i => (
             <Skeleton 
               key={i} 
               variant="rectangular" 
-              height={110} 
+              height={isMobile ? 80 : 110} 
               sx={{ 
                 borderRadius: 3, 
                 mb: 2,
-                bgcolor: 'rgba(0,0,0,0.08)'
+                bgcolor: 'rgba(0,0,0,0.06)'
               }} 
             />
           ))}
-        </Container>
+        </Box>
       </Box>
     );
   }
 
-  /* -------------------- UI -------------------- */
+  /* -------------------- MOBILE VIEW SWITCHER -------------------- */
+  const renderMobileView = () => {
+    switch (mobileView) {
+      case 'stats':
+        return (
+          <Box sx={{ p: 2 }}>
+            <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
+              Purchase Statistics
+            </Typography>
+            <Grid container spacing={2}>
+              {[
+                { label: 'Total', value: stats.totalPurchases, color: PRIMARY_BLUE },
+                { label: 'Amount', value: formatCurrency(stats.totalAmount), color: '#4CAF50' },
+                { label: 'Pending', value: formatCurrency(stats.pendingAmount), color: '#FF9800' },
+                { label: 'Completed', value: stats.completedPurchases, color: '#9C27B0' },
+                { label: 'Partial', value: stats.partiallyPaid, color: '#FF5722' },
+                { label: 'Pending %', 
+                  value: stats.totalPurchases > 0 
+                    ? `${Math.round((stats.completedPurchases / stats.totalPurchases) * 100)}%` 
+                    : '0%', 
+                  color: '#607D8B' 
+                }
+              ].map((s, i) => (
+                <Grid item xs={6} key={i}>
+                  <PremiumCard
+                    sx={{
+                      textAlign: 'center',
+                      borderRadius: 2,
+                      p: 2,
+                      border: `1px solid ${s.color}20`,
+                      bgcolor: `${s.color}08`,
+                      height: '100%'
+                    }}
+                  >
+                    <Typography 
+                      fontWeight={700} 
+                      fontSize={16}
+                      color={s.color}
+                    >
+                      {s.value}
+                    </Typography>
+                    <Typography 
+                      fontSize={10} 
+                      color="text.secondary"
+                      sx={{ mt: 0.5 }}
+                    >
+                      {s.label}
+                    </Typography>
+                  </PremiumCard>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        );
+      
+      case 'list':
+      default:
+        return (
+          <Box sx={{ p: 2 }}>
+            {/* Mobile Filter Chips */}
+            <Box sx={{ mb: 2 }}>
+              <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 1 }}>
+                {['all', 'pending', 'paid', 'partial', 'unpaid'].map((filter) => (
+                  <Chip
+                    key={filter}
+                    label={filter.charAt(0).toUpperCase() + filter.slice(1)}
+                    size="small"
+                    onClick={() => setStatusFilter(filter)}
+                    color={statusFilter === filter ? "primary" : "default"}
+                    variant={statusFilter === filter ? "filled" : "outlined"}
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: statusFilter === filter ? 600 : 400
+                    }}
+                  />
+                ))}
+              </Stack>
+            </Box>
+
+            {/* Purchase List */}
+            <Stack spacing={2}>
+              {filteredPurchases.map(p => (
+                <PurchaseCard
+                  key={p.id}
+                  purchase={p}
+                  onClick={() => navigate(`/purchases/${p.id}`)}
+                  isMobile={isMobile}
+                />
+              ))}
+            </Stack>
+          </Box>
+        );
+    }
+  };
+
+  /* -------------------- MOBILE UI -------------------- */
+  if (isMobile) {
+    return (
+      <Box sx={{ 
+        minHeight: '100vh', 
+        bgcolor: '#f5f7fb',
+        pb: 8
+      }}>
+        {/* Fixed Header */}
+        <Box
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bgcolor: PRIMARY_BLUE,
+            py: 2,
+            px: 2,
+            zIndex: 1100,
+            boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={2}>
+            <Typography
+              fontSize={18}
+              fontWeight={700}
+              color="white"
+              sx={{ flex: 1 }}
+            >
+              Purchase History
+            </Typography>
+            
+            <IconButton
+              onClick={handleRefresh}
+              sx={{
+                color: 'white',
+                bgcolor: 'rgba(255,255,255,0.2)',
+                '&:hover': {
+                  bgcolor: 'rgba(255,255,255,0.3)'
+                }
+              }}
+              size="small"
+            >
+              <Refresh fontSize="small" />
+            </IconButton>
+
+            <IconButton
+              onClick={(e) => setAnchorEl(e.currentTarget)}
+              sx={{
+                color: 'white',
+                bgcolor: 'rgba(255,255,255,0.2)',
+                '&:hover': {
+                  bgcolor: 'rgba(255,255,255,0.3)'
+                }
+              }}
+              size="small"
+            >
+              <Sort fontSize="small" />
+            </IconButton>
+          </Stack>
+        </Box>
+
+        {/* Content Area */}
+        <Box sx={{ pt: '56px' }}>
+          {/* Search Bar */}
+          <Box sx={{ p: 2 }}>
+            <SearchBar
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search purchases..."
+              fullWidth
+              size="small"
+            />
+          </Box>
+
+          {/* Active Filters */}
+          <Box sx={{ px: 2, mb: 2 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="caption" color="text.secondary">
+                {filteredPurchases.length} items
+              </Typography>
+              <Box sx={{ flex: 1 }} />
+              <Chip
+                label={statusFilter}
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: 10 }}
+              />
+              {searchTerm && (
+                <Chip
+                  label={`Search: ${searchTerm}`}
+                  size="small"
+                  variant="outlined"
+                  onDelete={() => setSearchTerm('')}
+                  sx={{ fontSize: 10 }}
+                />
+              )}
+            </Stack>
+          </Box>
+
+          {/* Error Alert */}
+          {error && (
+            <Box sx={{ px: 2, mb: 2 }}>
+              <Alert 
+                severity="error" 
+                onClose={() => setError(null)}
+                sx={{ borderRadius: 2 }}
+                size="small"
+              >
+                {error}
+              </Alert>
+            </Box>
+          )}
+
+          {/* Data Quality Warning */}
+          {purchases.some(p => typeof p.remainingAmount !== 'number') && (
+            <Box sx={{ px: 2, mb: 2 }}>
+              <Alert 
+                severity="warning" 
+                icon={<Warning fontSize="small" />}
+                sx={{ borderRadius: 2 }}
+                size="small"
+              >
+                Calculated amounts shown
+              </Alert>
+            </Box>
+          )}
+
+          {/* Mobile Content */}
+          {renderMobileView()}
+
+          {/* No Results */}
+          {filteredPurchases.length === 0 && !loading && (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <Typography color="text.secondary">
+                {searchTerm 
+                  ? `No purchases found for "${searchTerm}"`
+                  : statusFilter !== 'all'
+                  ? `No ${statusFilter} purchases found`
+                  : 'No purchases found'}
+              </Typography>
+            </Box>
+          )}
+        </Box>
+
+        {/* Mobile Bottom Navigation */}
+        <Paper 
+          sx={{ 
+            position: 'fixed', 
+            bottom: 0, 
+            left: 0, 
+            right: 0,
+            zIndex: 1000,
+            borderTop: '1px solid #e0e0e0'
+          }} 
+          elevation={3}
+        >
+          <BottomNavigation
+            value={mobileView}
+            onChange={(event, newValue) => {
+              setMobileView(newValue);
+            }}
+            showLabels
+          >
+            <BottomNavigationAction 
+              label="List" 
+              value="list" 
+              icon={<ViewList />}
+              sx={{ 
+                minWidth: 'auto',
+                '&.Mui-selected': { color: PRIMARY_BLUE }
+              }}
+            />
+            <BottomNavigationAction 
+              label="Stats" 
+              value="stats" 
+              icon={<Dashboard />}
+              sx={{ 
+                minWidth: 'auto',
+                '&.Mui-selected': { color: PRIMARY_BLUE }
+              }}
+            />
+            <BottomNavigationAction 
+              label="Filter" 
+              icon={<FilterList />}
+              onClick={() => {
+                // Show filter menu
+                setStatusFilter(statusFilter === 'all' ? 'pending' : 
+                              statusFilter === 'pending' ? 'paid' :
+                              statusFilter === 'paid' ? 'partial' :
+                              statusFilter === 'partial' ? 'unpaid' : 'all');
+              }}
+              sx={{ 
+                minWidth: 'auto',
+                '&.Mui-selected': { color: PRIMARY_BLUE }
+              }}
+            />
+          </BottomNavigation>
+        </Paper>
+
+        {/* Mobile Floating Add Button */}
+        <Fab
+          onClick={() => navigate('/purchases/new')}
+          sx={{
+            position: 'fixed',
+            bottom: 72,
+            right: 16,
+            bgcolor: PRIMARY_BLUE,
+            color: 'white',
+            '&:hover': {
+              bgcolor: '#1565c0'
+            }
+          }}
+          size="medium"
+        >
+          <Add />
+        </Fab>
+
+        {/* Sort Menu */}
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={() => setAnchorEl(null)}
+          PaperProps={{
+            sx: {
+              mt: 1,
+              borderRadius: 2,
+              minWidth: 150
+            }
+          }}
+        >
+          <MenuItem 
+            onClick={() => handleSortChange('date')}
+            selected={sortBy === 'date'}
+            dense
+          >
+            <ListItemIcon>
+              <CalendarToday fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>
+              Date {sortBy === 'date' && (
+                sortOrder === 'desc' ? <ArrowDownward fontSize="small" /> : <ArrowUpward fontSize="small" />
+              )}
+            </ListItemText>
+          </MenuItem>
+
+          <MenuItem 
+            onClick={() => handleSortChange('amount')}
+            selected={sortBy === 'amount'}
+            dense
+          >
+            <ListItemIcon>
+              <AccountBalance fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>
+              Amount {sortBy === 'amount' && (
+                sortOrder === 'desc' ? <ArrowDownward fontSize="small" /> : <ArrowUpward fontSize="small" />
+              )}
+            </ListItemText>
+          </MenuItem>
+        </Menu>
+      </Box>
+    );
+  }
+
+  /* -------------------- DESKTOP/TABLET UI -------------------- */
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: '#f5f7fb', pb: 10 }}>
       {/* Header */}
       <Box
         sx={{
           bgcolor: PRIMARY_BLUE,
-          px: 2,
-          py: 3,
+          px: isTablet ? 3 : 4,
+          py: isTablet ? 3 : 4,
           borderBottomLeftRadius: 24,
           borderBottomRightRadius: 24,
           position: 'relative'
         }}
       >
         <Typography
-          fontSize={isMobile ? 22 : 26}
+          fontSize={isTablet ? 24 : 28}
           fontWeight={700}
           color="white"
         >
           Purchase History
         </Typography>
-        <Typography color="rgba(255,255,255,0.9)" fontSize={14}>
+        <Typography color="rgba(255,255,255,0.9)" fontSize={isTablet ? 14 : 16}>
           Track all vendor purchases and payments
         </Typography>
         
@@ -369,8 +739,8 @@ const PurchasesPage = () => {
           onClick={handleRefresh}
           sx={{
             position: 'absolute',
-            right: 16,
-            top: 16,
+            right: isTablet ? 20 : 24,
+            top: isTablet ? 20 : 24,
             color: 'white',
             bgcolor: 'rgba(255,255,255,0.2)',
             '&:hover': {
@@ -384,7 +754,7 @@ const PurchasesPage = () => {
 
       {/* Error Alert */}
       {error && (
-        <Container maxWidth="sm" sx={{ mt: 2 }}>
+        <Container maxWidth={isTablet ? "md" : "lg"} sx={{ mt: 2 }}>
           <Alert 
             severity="error" 
             onClose={() => setError(null)}
@@ -397,7 +767,7 @@ const PurchasesPage = () => {
 
       {/* Data Quality Warning */}
       {purchases.some(p => typeof p.remainingAmount !== 'number') && (
-        <Container maxWidth="sm" sx={{ mt: 2 }}>
+        <Container maxWidth={isTablet ? "md" : "lg"} sx={{ mt: 2 }}>
           <Alert 
             severity="warning" 
             icon={<Warning />}
@@ -408,17 +778,9 @@ const PurchasesPage = () => {
         </Container>
       )}
 
-      <Container maxWidth="sm" sx={{ mt: 3 }}>
-        {/* Stats */}
-        <Stack
-          direction="row"
-          spacing={2}
-          sx={{
-            overflowX: 'auto',
-            pb: 1,
-            '&::-webkit-scrollbar': { display: 'none' }
-          }}
-        >
+      <Container maxWidth={isTablet ? "md" : "lg"} sx={{ mt: 3 }}>
+        {/* Stats Grid */}
+        <Grid container spacing={2} sx={{ mb: 3 }}>
           {[
             { 
               label: 'Total Purchases', 
@@ -439,57 +801,77 @@ const PurchasesPage = () => {
               label: 'Completed', 
               value: stats.completedPurchases,
               color: '#9C27B0'
+            },
+            { 
+              label: 'Partially Paid', 
+              value: stats.partiallyPaid,
+              color: '#FF5722'
+            },
+            { 
+              label: 'Pending %', 
+              value: stats.totalPurchases > 0 
+                ? `${Math.round((stats.completedPurchases / stats.totalPurchases) * 100)}%` 
+                : '0%',
+              color: '#607D8B'
             }
           ].map((s, i) => (
-            <PremiumCard
-              key={i}
-              sx={{
-                minWidth: 140,
-                textAlign: 'center',
-                borderRadius: 3,
-                border: `1px solid ${s.color}20`,
-                bgcolor: `${s.color}08`
-              }}
-            >
-              <Typography 
-                fontWeight={700} 
-                fontSize={18}
-                color={s.color}
+            <Grid item xs={6} sm={4} md={2} key={i}>
+              <PremiumCard
+                sx={{
+                  textAlign: 'center',
+                  borderRadius: 3,
+                  p: 2,
+                  border: `1px solid ${s.color}20`,
+                  bgcolor: `${s.color}08`,
+                  height: '100%',
+                  transition: 'transform 0.2s',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                  }
+                }}
               >
-                {s.value}
-              </Typography>
-              <Typography 
-                fontSize={11} 
-                color="text.secondary"
-                sx={{ mt: 0.5 }}
-              >
-                {s.label}
-              </Typography>
-            </PremiumCard>
+                <Typography 
+                  fontWeight={700} 
+                  fontSize={isTablet ? 16 : 18}
+                  color={s.color}
+                >
+                  {s.value}
+                </Typography>
+                <Typography 
+                  fontSize={isTablet ? 10 : 11} 
+                  color="text.secondary"
+                  sx={{ mt: 0.5 }}
+                >
+                  {s.label}
+                </Typography>
+              </PremiumCard>
+            </Grid>
           ))}
-        </Stack>
+        </Grid>
 
         {/* Search & Filters */}
-        <Card sx={{ mt: 2, p: 2, borderRadius: 3 }}>
+        <Card sx={{ mt: 2, p: isTablet ? 2 : 3, borderRadius: 3 }}>
           <SearchBar
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Search by product, customer, or description"
             fullWidth
+            size={isTablet ? "small" : "medium"}
           />
 
-          <Stack direction="row" spacing={1} mt={2} alignItems="center">
+          <Stack direction="row" spacing={2} mt={2} alignItems="center" flexWrap="wrap">
             <ToggleButtonGroup
               value={statusFilter}
               exclusive
               onChange={(e, v) => v && setStatusFilter(v)}
-              size="small"
+              size={isTablet ? "small" : "medium"}
               sx={{
                 flexWrap: 'wrap',
                 '& .MuiToggleButton-root': {
-                  fontSize: 12,
-                  px: 1.5,
-                  py: 0.5,
+                  fontSize: isTablet ? 12 : 14,
+                  px: isTablet ? 1.5 : 2,
+                  py: isTablet ? 0.5 : 1,
                   borderRadius: 2,
                   borderColor: '#ddd',
                   '&.Mui-selected': {
@@ -515,8 +897,8 @@ const PurchasesPage = () => {
               sx={{ 
                 border: '1px solid #ddd',
                 borderRadius: 2,
-                width: 36,
-                height: 36
+                width: isTablet ? 36 : 40,
+                height: isTablet ? 36 : 40
               }}
             >
               <Sort />
@@ -524,11 +906,12 @@ const PurchasesPage = () => {
           </Stack>
           
           {/* Active Filters Info */}
-          <Box sx={{ mt: 1 }}>
+          <Box sx={{ mt: 2 }}>
             <Typography variant="caption" color="text.secondary">
               Showing {filteredPurchases.length} of {purchases.length} purchases
               {statusFilter !== 'all' && ` • Filter: ${statusFilter}`}
               {searchTerm && ` • Search: "${searchTerm}"`}
+              {sortBy !== 'date' && ` • Sorted by: ${sortBy} (${sortOrder})`}
             </Typography>
           </Box>
         </Card>
@@ -562,31 +945,31 @@ const PurchasesPage = () => {
 
         {/* List */}
         <Fade in={!loading} timeout={500}>
-          <Stack spacing={2} mt={3}>
+          <Grid container spacing={2} mt={3}>
             {filteredPurchases.map(p => (
-              <PurchaseCard
-                key={p.id}
-                purchase={p}
-                onClick={() => navigate(`/purchases/${p.id}`)}
-              />
+              <Grid item xs={12} key={p.id}>
+                <PurchaseCard
+                  purchase={p}
+                  onClick={() => navigate(`/purchases/${p.id}`)}
+                  isMobile={false}
+                />
+              </Grid>
             ))}
-          </Stack>
+          </Grid>
         </Fade>
       </Container>
 
       {/* Floating Add Button */}
-      <IconButton
+      <Fab
         onClick={() => navigate('/purchases/new')}
         sx={{
           position: 'fixed',
-          bottom: 24,
-          right: 24,
+          bottom: isTablet ? 24 : 32,
+          right: isTablet ? 24 : 32,
           bgcolor: PRIMARY_BLUE,
           color: 'white',
-          width: 56,
-          height: 56,
-          borderRadius: '50%',
-          boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
+          width: isTablet ? 56 : 64,
+          height: isTablet ? 56 : 64,
           '&:hover': {
             bgcolor: '#1565c0',
             transform: 'scale(1.05)'
@@ -594,8 +977,8 @@ const PurchasesPage = () => {
           transition: 'all 0.2s ease'
         }}
       >
-        <Add fontSize="large" />
-      </IconButton>
+        <Add fontSize={isTablet ? "medium" : "large"} />
+      </Fab>
 
       {/* Sort Menu */}
       <Menu
@@ -606,7 +989,7 @@ const PurchasesPage = () => {
           sx: {
             mt: 1,
             borderRadius: 2,
-            minWidth: 180
+            minWidth: 200
           }
         }}
       >
