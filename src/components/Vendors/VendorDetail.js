@@ -15,14 +15,15 @@ import {
   CheckCircle, Close, Payment, Refresh, BarChart,
   Visibility, Business, People, History,
   Inventory, Store, AccountBalance, LocalShipping, Payment as PaymentIcon,
-  AccountBalanceWallet, Phone, Email
+  AccountBalanceWallet, Phone, Email, Delete, Warning
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
   doc, getDoc, collection, query, where, onSnapshot,
-  addDoc, updateDoc, serverTimestamp, orderBy, getDocs
+  addDoc, updateDoc, serverTimestamp, orderBy, getDocs,
+  deleteDoc, writeBatch
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 
@@ -56,6 +57,11 @@ const VendorDetail = () => {
     email: '',
     address: ''
   });
+
+  // Delete state
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [deletingVendor, setDeletingVendor] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
 
   const [notification, setNotification] = useState({
     show: false,
@@ -340,6 +346,158 @@ const VendorDetail = () => {
     }
   };
 
+  // Delete vendor with all associated data
+  const handleDeleteVendor = async () => {
+    if (deleteConfirmation !== 'DELETE') {
+      showNotification('Please type DELETE to confirm', 'error');
+      return;
+    }
+
+    // First confirmation
+    const confirm1 = window.confirm(
+      `⚠️ WARNING: Are you absolutely sure you want to delete "${vendor.vendorName}"?\n\n` +
+      `This will delete:\n` +
+      `• Vendor details\n` +
+      `• ${transactions.length} purchases\n` +
+      `• ${payments.length} payments\n` +
+      `• ₹${vendor.balance} balance\n\n` +
+      `Customer balances will be automatically recalculated.`
+    );
+    
+    if (!confirm1) {
+      return;
+    }
+
+    // Second confirmation for safety
+    const confirm2 = window.confirm(
+      `🚨 FINAL WARNING: This action cannot be undone!\n\n` +
+      `All data for "${vendor.vendorName}" will be permanently deleted.\n\n` +
+      `Type DELETE to confirm this permanent deletion.`
+    );
+    
+    if (!confirm2) {
+      return;
+    }
+
+    setDeletingVendor(true);
+
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Delete vendor document
+      const vendorRef = doc(db, 'vendors', id);
+      batch.delete(vendorRef);
+      
+      // 2. Get all unique customers from this vendor's transactions
+      const customerIds = [...new Set(
+        transactions
+          .map(t => t.customerId)
+          .filter(customerId => customerId && customerId.trim() !== '')
+      )];
+      
+      console.log('Customers affected:', customerIds);
+      
+      // 3. Delete all transactions for this vendor
+      transactions.forEach(transaction => {
+        const transactionRef = doc(db, 'transactions', transaction.id);
+        batch.delete(transactionRef);
+      });
+      
+      // 4. Delete all payments for this vendor
+      payments.forEach(payment => {
+        const paymentRef = doc(db, 'payments', payment.id);
+        batch.delete(paymentRef);
+      });
+      
+      // 5. Recalculate customer balances for affected customers
+      for (const customerId of customerIds) {
+        try {
+          // Get customer document to check if exists
+          const customerDoc = await getDoc(doc(db, 'customers', customerId));
+          if (!customerDoc.exists()) {
+            console.log(`Customer ${customerId} not found, skipping`);
+            continue;
+          }
+          
+          // Get all remaining transactions for this customer (excluding deleted vendor's)
+          const customerTransactionsQuery = query(
+            collection(db, 'transactions'),
+            where('customerId', '==', customerId)
+          );
+          
+          const customerTransactionsSnap = await getDocs(customerTransactionsQuery);
+          const remainingTransactions = customerTransactionsSnap.docs
+            .map(doc => ({ 
+              id: doc.id, 
+              ...doc.data(),
+              amount: doc.data().amount || 0
+            }))
+            .filter(t => t.vendorId !== id); // Exclude transactions from deleted vendor
+          
+          console.log(`Customer ${customerId} remaining transactions:`, remainingTransactions.length);
+          
+          // Get all payments for this customer
+          const customerPaymentsQuery = query(
+            collection(db, 'payments'),
+            where('customerId', '==', customerId)
+          );
+          
+          const customerPaymentsSnap = await getDocs(customerPaymentsQuery);
+          const remainingPayments = customerPaymentsSnap.docs
+            .map(doc => ({ 
+              id: doc.id, 
+              ...doc.data(),
+              amount: Math.abs(doc.data().amount) || 0
+            }))
+            .filter(p => p.vendorId !== id); // Exclude payments to deleted vendor
+          
+          // Calculate new balance
+          const totalPurchases = remainingTransactions.reduce((sum, t) => sum + t.amount, 0);
+          const totalPayments = remainingPayments.reduce((sum, p) => sum + p.amount, 0);
+          const newBalance = totalPurchases - totalPayments;
+          
+          console.log(`Customer ${customerId} balance update:`, {
+            oldBalance: customerDoc.data().balance,
+            newBalance,
+            totalPurchases,
+            totalPayments
+          });
+          
+          // Update customer balance
+          const customerRef = doc(db, 'customers', customerId);
+          batch.update(customerRef, {
+            balance: newBalance,
+            updatedAt: serverTimestamp()
+          });
+        } catch (customerError) {
+          console.error(`Error updating customer ${customerId}:`, customerError);
+          // Continue with other customers even if one fails
+        }
+      }
+      
+      // Execute all operations
+      await batch.commit();
+      
+      showNotification(
+        `Vendor "${vendor.vendorName}" and all associated data deleted successfully`, 
+        'success'
+      );
+      
+      // Navigate back to vendors list after a short delay
+      setTimeout(() => {
+        navigate('/vendors');
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error deleting vendor:', error);
+      showNotification('Error deleting vendor. Please try again.', 'error');
+    } finally {
+      setDeletingVendor(false);
+      setOpenDeleteDialog(false);
+      setDeleteConfirmation('');
+    }
+  };
+
   // Show notification
   const showNotification = (message, type = 'success', amount = 0) => {
     setNotification({
@@ -436,12 +594,32 @@ const VendorDetail = () => {
                       {vendor.email}
                     </Typography>
                   )}
+                  <Chip 
+                    label={`Balance: ₹${vendor.balance || 0}`} 
+                    size="small"
+                    color={vendor.balance > 0 ? "error" : "success"}
+                  />
                 </Stack>
               </Box>
               <Stack direction="row" spacing={1}>
-                <IconButton onClick={() => setOpenEditDialog(true)}>
-                  <Edit />
-                </IconButton>
+                <Tooltip title="Edit Vendor">
+                  <IconButton onClick={() => setOpenEditDialog(true)}>
+                    <Edit />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Delete Vendor">
+                  <IconButton 
+                    onClick={() => setOpenDeleteDialog(true)}
+                    sx={{ 
+                      color: 'error.main',
+                      '&:hover': {
+                        backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                      }
+                    }}
+                  >
+                    <Delete />
+                  </IconButton>
+                </Tooltip>
               </Stack>
             </Stack>
           </Container>
@@ -1035,6 +1213,110 @@ const VendorDetail = () => {
               startIcon={<CheckCircle />}
             >
               Update Vendor
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Vendor Dialog */}
+        <Dialog 
+          open={openDeleteDialog} 
+          onClose={() => !deletingVendor && setOpenDeleteDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600} color="error">
+              <Warning sx={{ verticalAlign: 'middle', mr: 1 }} />
+              Delete Vendor
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {vendor?.vendorName}
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={3}>
+              <Alert severity="error" icon={false}>
+                <Typography fontWeight={600} gutterBottom>
+                  ⚠️ DANGER ZONE ⚠️
+                </Typography>
+                <Typography variant="body2">
+                  This action will permanently delete:
+                </Typography>
+                <List dense sx={{ pl: 2 }}>
+                  <ListItem sx={{ py: 0 }}>
+                    • Vendor: {vendor?.vendorName}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Total purchases: {stats.transactionCount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Payments: {payments.length}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Balance: ₹{vendor?.balance}
+                  </ListItem>
+                </List>
+                <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
+                  Customer balances will be recalculated after deletion.
+                </Typography>
+              </Alert>
+
+              <Alert severity="warning">
+                This action cannot be undone. Please proceed with caution.
+              </Alert>
+
+              <TextField
+                fullWidth
+                label={`Type "DELETE" to confirm`}
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                placeholder="DELETE"
+                disabled={deletingVendor}
+                sx={{ mt: 2 }}
+                helperText="Type the word DELETE in uppercase to confirm"
+              />
+
+              <Box sx={{ bgcolor: '#fff3e0', p: 2, borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight={600} gutterBottom>
+                  Confirmation Checklist:
+                </Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2">
+                    ✓ I understand all vendor data will be permanently deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand all purchases for this vendor will be deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand customer balances will be recalculated
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I have backed up any necessary data
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => {
+                setOpenDeleteDialog(false);
+                setDeleteConfirmation('');
+              }}
+              disabled={deletingVendor}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              onClick={handleDeleteVendor}
+              disabled={deleteConfirmation !== 'DELETE' || deletingVendor}
+              startIcon={deletingVendor ? <CircularProgress size={20} /> : <Delete />}
+            >
+              {deletingVendor ? 'Deleting...' : 'Delete Permanently'}
             </Button>
           </DialogActions>
         </Dialog>

@@ -81,6 +81,7 @@ function App() {
       </ThemeProvider>
     );
   }
+  //deleteAllCustomersData();
 
   return (
     <ThemeProvider theme={redTheme}>
