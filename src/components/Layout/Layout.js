@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Inventory2 } from '@mui/icons-material';
+
 import { 
   Box, 
   AppBar, 
@@ -37,7 +39,6 @@ import {
   People,
   Menu as MenuIcon,
   Notifications,
-  AccountCircle,
   Logout,
   Settings,
   Brightness4,
@@ -47,11 +48,10 @@ import {
   TrendingUp,
   Store,
   PictureAsPdf,
-  ReceiptLong,
-  // ADD THESE NEW ICONS
-  Groups,
   ShoppingCart,
-  Receipt
+  Receipt,
+  Person,
+  Business  // ADDED for Vendors icon
 } from '@mui/icons-material';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../../services/firebase';
@@ -281,16 +281,20 @@ const Layout = () => {
     return formatter.format(amount);
   };
 
-  // UPDATED MENU ITEMS - Added new premium pages
+  // UPDATED MENU ITEMS - Added Vendors after Product Manager
   const menuItems = [
     { text: 'Dashboard', icon: <Dashboard />, path: '/' },
-    { text: 'Add Customer', icon: <PersonAdd />, path: '/entry' },
+    { text: 'Sales', icon: <PersonAdd />, path: '/entry' },
     { text: 'Customer List', icon: <ListAlt />, path: '/list' },
     { text: 'Payments', icon: <Payment />, path: '/paid' },
+    { text: 'Product Manager', icon: <Inventory2 />, path: '/products' },
+    { text: 'Vendors', icon: <Business />, path: '/vendors' }, // ADDED: Vendors button
     { text: 'Purchase History', icon: <ShoppingCart />, path: '/purchases' },
     { text: 'Product Prices', icon: <AttachMoney />, path: '/price' },
     { text: 'Generate PDF', icon: <PictureAsPdf />, path: '/generate-pdf' },
     { text: 'Users', icon: <People />, path: '/users' },
+    { text: 'Profile', icon: <Person />, path: '/profile' },
+    { text: 'Settings', icon: <Settings />, path: '/settings' },
   ];
 
   const handleDrawerToggle = () => {
@@ -362,28 +366,40 @@ const Layout = () => {
     });
   };
 
+  // UPDATED: Added Vendors route
   const getPageTitle = () => {
     const currentItem = menuItems.find(item => item.path === location.pathname);
     if (currentItem) return currentItem.text;
-    
+    if (location.pathname === '/products') return 'Product Manager';
+
     if (location.pathname.includes('/list/')) return 'Customer Details';
     if (location.pathname.includes('/generate-pdf')) return 'PDF Generator';
     if (location.pathname.includes('/customers/')) return 'Customer Details';
     if (location.pathname.includes('/purchases/')) return 'Purchase Details';
+    if (location.pathname.includes('/vendors/')) return 'Vendor Details';
+    if (location.pathname === '/profile') return 'My Profile';
+    if (location.pathname === '/settings') return 'Settings';
+    if (location.pathname === '/vendors') return 'Vendors';
     
     if (location.pathname === '/') return 'Dashboard';
     
     return 'Dashboard';
   };
 
+  // UPDATED: Added Vendors icon
   const getPageIcon = () => {
     const currentItem = menuItems.find(item => item.path === location.pathname);
     if (currentItem) return currentItem.icon;
-    
-    if (location.pathname.includes('/customers/')) return <Groups />;
+    if (location.pathname === '/products') return <Inventory2 />;
+
+    if (location.pathname.includes('/customers/')) return <People />;
     if (location.pathname.includes('/purchases/')) return <ShoppingCart />;
     if (location.pathname.includes('/list/')) return <People />;
     if (location.pathname.includes('/generate-pdf')) return <PictureAsPdf />;
+    if (location.pathname.includes('/vendors/')) return <Business />;
+    if (location.pathname === '/profile') return <Person />;
+    if (location.pathname === '/settings') return <Settings />;
+    if (location.pathname === '/vendors') return <Business />;
     
     return <Store />;
   };
@@ -454,10 +470,11 @@ const Layout = () => {
           {menuItems.map((item) => {
             const isActive = location.pathname === item.path || 
                            (item.path === '/customers' && location.pathname.includes('/customers/')) ||
-                           (item.path === '/purchases' && location.pathname.includes('/purchases/'));
+                           (item.path === '/purchases' && location.pathname.includes('/purchases/')) ||
+                           (item.path === '/vendors' && location.pathname.includes('/vendors/'));
             
             // Add premium badge for new pages
-            const isPremiumPage = item.path === '/customers' || item.path === '/purchases';
+            const isPremiumPage = item.path === '/vendors' || item.path === '/customers' || item.path === '/purchases';
             
             return (
               <ListItem 
@@ -495,15 +512,15 @@ const Layout = () => {
                       >
                         {item.text}
                       </Typography>
-                      {isPremiumPage && !isActive && (
+                      {isPremiumPage && !isActive && item.path === '/vendors' && (
                         <Chip
                           label="New"
                           size="small"
                           sx={{
                             height: 16,
                             fontSize: '0.6rem',
-                            bgcolor: 'rgba(76, 175, 80, 0.1)',
-                            color: '#4CAF50',
+                            bgcolor: 'rgba(33, 150, 243, 0.1)',
+                            color: '#2196F3',
                             fontWeight: 'bold',
                             ml: 1
                           }}
@@ -657,21 +674,6 @@ const Layout = () => {
               >
                 {getPageIcon()}
                 {getPageTitle()}
-                {/* Show premium badge for new pages */}
-                {(location.pathname === '/customers' || location.pathname === '/purchases') && (
-                  <Chip
-                    label="Premium"
-                    size="small"
-                    sx={{
-                      height: 20,
-                      fontSize: '0.65rem',
-                      bgcolor: 'rgba(76, 175, 80, 0.1)',
-                      color: '#4CAF50',
-                      fontWeight: 'bold',
-                      ml: 1
-                    }}
-                  />
-                )}
               </Typography>
               <Typography 
                 variant="caption" 
@@ -706,7 +708,7 @@ const Layout = () => {
                   />
                   <input
                     type="text"
-                    placeholder="Search customers, products..."
+                    placeholder="Search customers, vendors, products..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyPress={handleSearch}
@@ -807,26 +809,26 @@ const Layout = () => {
                 </Tooltip>
               )}
 
-              {/* Quick Purchase Button */}
+              {/* Quick Vendors Button */}
               {!isMobile && (
-                <Tooltip title="Add New Purchase" arrow>
+                <Tooltip title="Manage Vendors" arrow>
                   <Button
-                    startIcon={<Receipt />}
+                    startIcon={<Business />}
                     variant="outlined"
                     size="small"
                     sx={{
-                      borderColor: '#4CAF50',
-                      color: '#4CAF50',
+                      borderColor: '#2196F3',
+                      color: '#2196F3',
                       '&:hover': {
-                        borderColor: '#388E3C',
-                        bgcolor: 'rgba(76, 175, 80, 0.04)'
+                        borderColor: '#1976D2',
+                        bgcolor: 'rgba(33, 150, 243, 0.04)'
                       },
                       textTransform: 'none',
                       fontWeight: 'bold'
                     }}
-                    onClick={() => navigate('/purchases')}
+                    onClick={() => navigate('/vendors')}
                   >
-                    View Purchases
+                    Vendors
                   </Button>
                 </Tooltip>
               )}
@@ -954,14 +956,17 @@ const Layout = () => {
                   Owner • Active
                 </Typography>
               </Box>
-              <MenuItem onClick={handleMenuClose}>
-                <ListItemIcon><AccountCircle fontSize="small" /></ListItemIcon>
-                <ListItemText>Profile</ListItemText>
+              
+              <MenuItem onClick={() => { handleMenuClose(); navigate('/profile'); }}>
+                <ListItemIcon><Person fontSize="small" /></ListItemIcon>
+                <ListItemText>My Profile</ListItemText>
               </MenuItem>
+              
               <MenuItem onClick={() => { handleMenuClose(); navigate('/settings'); }}>
                 <ListItemIcon><Settings fontSize="small" /></ListItemIcon>
                 <ListItemText>Settings</ListItemText>
               </MenuItem>
+              
               <Divider />
               <MenuItem onClick={handleLogout} sx={{ color: '#d32f2f' }}>
                 <ListItemIcon><Logout fontSize="small" sx={{ color: '#d32f2f' }} /></ListItemIcon>
@@ -1030,21 +1035,6 @@ const Layout = () => {
               minHeight: { xs: 64, sm: 72, md: 72 } 
             }} 
           />
-          
-          {/* New Features Announcement */}
-          {(location.pathname === '/' || location.pathname === '/customers' || location.pathname === '/purchases') && (
-            <Alert 
-              severity="info" 
-              sx={{ 
-                mb: 2, 
-                borderRadius: 2,
-                bgcolor: 'rgba(76, 175, 80, 0.1)',
-                border: '1px solid rgba(76, 175, 80, 0.2)'
-              }}
-            >
-              <strong>New Premium Features Available!</strong> Check out the new Customers and Purchase History pages with premium iOS-style design.
-            </Alert>
-          )}
           
           {/* PDF Generation Alert */}
           {stats.pendingCustomers > 0 && location.pathname === '/' && (

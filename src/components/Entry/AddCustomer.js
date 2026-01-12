@@ -1,35 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
   Paper,
   TextField,
   Button,
-  Typography,
   Grid,
-  Box,
-  Card,
-  Stack,
-  Divider,
+  Typography,
+  MenuItem,
   InputAdornment,
-  useTheme,
-  useMediaQuery,
-  Chip,
-  CircularProgress,
+  Box,
   Alert,
-  Snackbar
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack,
+  Chip
 } from '@mui/material';
 
 import {
   Person,
   Phone,
-  Store,
+  CalendarToday,
+  Numbers,
   AttachMoney,
-  Description,
-  Receipt,
+  Category as CategoryIcon,
+  Store,
   Add,
-  Info,
-  CheckCircle,
-  Pending
+  Business
 } from '@mui/icons-material';
 
 import {
@@ -38,468 +38,521 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
-  getDocs
+  onSnapshot,
+  query,
+  orderBy
 } from 'firebase/firestore';
 
 import { db } from '../../services/firebase';
 
-/* ------------------ CATEGORY LIST ------------------ */
-const categories = [
-  { en: 'Cement', ta: 'சிமெண்டு' },
-  { en: 'Bricks', ta: 'செங்கல்' },
-  { en: 'Steel', ta: 'இரும்பு' },
-  { en: 'Sheet', ta: 'ஷீட்' },
-  { en: 'Pipes', ta: 'குழாய்கள்' },
-  { en: 'Other', ta: 'மற்றவை' }
-];
-
 const AddCustomer = () => {
-  const theme = useTheme();
-  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
+  const navigate = useNavigate();
+  const submitLock = useRef(false);
 
-  const [formData, setFormData] = useState({
+  /* ---------------- STATE ---------------- */
+  const [vendors, setVendors] = useState([]); // Using vendors as customers
+  const [products, setProducts] = useState([]);
+  const [filteredCompanies, setFilteredCompanies] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedVendor, setSelectedVendor] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [showNewCustomerDialog, setShowNewCustomerDialog] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+
+  const [form, setForm] = useState({
     customerName: '',
     phone: '',
-    productName: '',
+    date: new Date().toISOString().slice(0, 10),
     category: '',
-    amount: '',
-    billNumber: '',
-    description: ''
+    company: '',
+    unit: '',
+    quantity: '',
+    price: '',
+    amount: 0
   });
 
-  const [customers, setCustomers] = useState([]);
-  const [suggestions, setSuggestions] = useState([]);
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [loading, setLoading] = useState(false); // ✅ ADDED: Loading state
-  const [snackbar, setSnackbar] = useState({ // ✅ ADDED: Success/error messages
-    open: false,
-    message: '',
-    severity: 'success'
-  });
-
-  /* ------------------ FETCH CUSTOMERS ------------------ */
+  /* ---------------- FETCH VENDORS (AS CUSTOMERS) ---------------- */
   useEffect(() => {
-    const fetchCustomers = async () => {
-      const snap = await getDocs(collection(db, 'customers'));
-      setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    };
-    fetchCustomers();
+    const unsub = onSnapshot(
+      query(collection(db, 'vendors'), orderBy('vendorName')),
+      snap => {
+        const vendorsList = snap.docs.map(d => ({ 
+          id: d.id, 
+          ...d.data(),
+          customerName: d.data().vendorName, // Map for compatibility
+          balance: d.data().balance || 0
+        }));
+        setVendors(vendorsList);
+        setLoading(false);
+      }
+    );
+    return unsub;
   }, []);
 
-  /* ------------------ SUGGESTIONS ------------------ */
+  /* ---------------- FETCH PRODUCTS ---------------- */
   useEffect(() => {
-    if (
-      (formData.customerName.length >= 2 || formData.phone.length >= 3) &&
-      !selectedCustomer
-    ) {
-      const filtered = customers.filter(c =>
-        c.customerName.toLowerCase().includes(formData.customerName.toLowerCase()) ||
-        c.phone.includes(formData.phone)
+    const unsub = onSnapshot(collection(db, 'products'), snap => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
+
+  /* ---------------- FILTER COMPANIES BY CATEGORY ---------------- */
+  useEffect(() => {
+    if (!form.category) {
+      setFilteredCompanies([]);
+      return;
+    }
+
+    const companies = products
+      .filter(p => p.category === form.category && p.active)
+      .map(p => p.company);
+
+    setFilteredCompanies([...new Set(companies)]);
+  }, [form.category, products]);
+
+  /* ---------------- AUTOCOMPLETE VENDOR - FROM FIRST LETTER ---------------- */
+  useEffect(() => {
+    if (form.customerName.length >= 1 && !selectedVendor) {
+      const searchTerm = form.customerName.toLowerCase();
+      const match = vendors.filter(v =>
+        v.vendorName.toLowerCase().startsWith(searchTerm) ||
+        v.vendorName.toLowerCase().includes(searchTerm)
       );
-      setSuggestions(filtered.slice(0, 5));
+      setSuggestions(match.slice(0, 8));
     } else {
       setSuggestions([]);
     }
-  }, [formData.customerName, formData.phone, customers, selectedCustomer]);
+  }, [form.customerName, vendors, selectedVendor]);
 
-  const handleChange = e => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSelectCustomer = customer => {
-    setSelectedCustomer(customer);
-    setFormData({
-      customerName: customer.customerName,
-      phone: customer.phone,
-      productName: '',
-      category: customer.category || '',
-      amount: '',
-      billNumber: '',
-      description: ''
-    });
+  const selectVendor = (v) => {
+    setSelectedVendor(v);
+    setForm(f => ({
+      ...f,
+      customerName: v.vendorName,
+      phone: v.phone || ''
+    }));
     setSuggestions([]);
   };
 
-  const resetCustomer = () => {
-    setSelectedCustomer(null);
-    setFormData({
-      customerName: '',
-      phone: '',
-      productName: '',
-      category: '',
-      amount: '',
-      billNumber: '',
-      description: ''
-    });
+  /* ---------------- CHECK IF VENDOR EXISTS ---------------- */
+  const checkVendorExists = (vendorName) => {
+    return vendors.some(v => 
+      v.vendorName.toLowerCase() === vendorName.toLowerCase()
+    );
   };
 
-  const showSnackbar = (message, severity = 'success') => {
-    setSnackbar({
-      open: true,
-      message,
-      severity
-    });
+  /* ---------------- AUTO CALCULATE AMOUNT ---------------- */
+  useEffect(() => {
+    const qty = Number(form.quantity);
+    const price = Number(form.price);
+    setForm(f => ({
+      ...f,
+      amount: qty > 0 && price > 0 ? qty * price : 0
+    }));
+  }, [form.quantity, form.price]);
+
+  /* ---------------- COMPANY SELECT ---------------- */
+  const handleCompanySelect = company => {
+    const product = products.find(
+      p => p.category === form.category && p.company === company
+    );
+
+    setForm(f => ({
+      ...f,
+      company,
+      unit: product?.unit || ''
+    }));
   };
 
-  /* ------------------ SUBMIT WITH DOUBLE-CLICK PREVENTION ------------------ */
+  /* ---------------- GET CATEGORIES ---------------- */
+  const categories = [...new Set(products.filter(p => p.active).map(p => p.category))];
+
+  /* ---------------- VALIDATION ---------------- */
+  const validate = () => {
+    if (!form.customerName) return 'Customer/Vendor name required';
+    
+    if (!checkVendorExists(form.customerName)) {
+      setNewCustomerName(form.customerName);
+      setShowNewCustomerDialog(true);
+      return 'VENDOR_NOT_FOUND';
+    }
+    
+    if (!form.category) return 'Select category';
+    if (!form.company) return 'Select company';
+    if (!form.quantity || form.quantity <= 0) return 'Invalid quantity';
+    if (!form.price || form.price <= 0) return 'Invalid price';
+    return '';
+  };
+
+  /* ---------------- HANDLE NEW VENDOR DIALOG ---------------- */
+  const handleGoToVendorList = () => {
+    navigate('/vendors');
+  };
+
+  const handleCancelNewVendor = () => {
+    setShowNewCustomerDialog(false);
+    setNewCustomerName('');
+    setForm(f => ({ ...f, customerName: '' }));
+  };
+
+  /* ---------------- SUBMIT ---------------- */
   const handleSubmit = async e => {
     e.preventDefault();
-    
-    // ✅ PREVENT DOUBLE CLICK
-    if (loading) return;
-    
-    const amount = Number(formData.amount);
-    if (!amount || amount <= 0) {
-      showSnackbar('Please enter a valid amount', 'error');
+    if (submitLock.current) return;
+
+    const error = validate();
+    if (error === 'VENDOR_NOT_FOUND') {
+      return;
+    }
+    if (error) {
+      alert(error);
       return;
     }
 
-    // ✅ Validate required fields
-    if (!formData.customerName.trim()) {
-      showSnackbar('Please enter customer name', 'error');
-      return;
-    }
-
-    if (!formData.phone.trim()) {
-      showSnackbar('Please enter phone number', 'error');
-      return;
-    }
-
-    if (!formData.productName.trim()) {
-      showSnackbar('Please enter product name', 'error');
-      return;
-    }
-
-    setLoading(true); // ✅ Set loading to true
+    submitLock.current = true;
+    setSaving(true);
 
     try {
-      let customerRef;
+      let vendorId;
+      const vendor = vendors.find(v => 
+        v.vendorName.toLowerCase() === form.customerName.toLowerCase()
+      );
 
-      if (selectedCustomer) {
-        customerRef = doc(db, 'customers', selectedCustomer.id);
-        await updateDoc(customerRef, {
-          balance: (selectedCustomer.balance || 0) + amount,
+      if (vendor) {
+        vendorId = vendor.id;
+        
+        // Update vendor balance (vendor owes you money - positive balance)
+        const newBalance = (vendor.balance || 0) + form.amount;
+        await updateDoc(doc(db, 'vendors', vendorId), {
+          balance: newBalance,
           updatedAt: serverTimestamp()
         });
       } else {
-        customerRef = await addDoc(collection(db, 'customers'), {
-          customerName: formData.customerName.trim(),
-          phone: formData.phone.trim(),
-          balance: amount,
-          createdAt: serverTimestamp(),
-          category: formData.category || ''
-        });
+        alert('Vendor not found. Please create vendor in Vendor List first.');
+        submitLock.current = false;
+        setSaving(false);
+        return;
       }
 
+      // Add transaction - IMPORTANT: Save as vendor record
       await addDoc(collection(db, 'transactions'), {
-        customerId: customerRef.id,
-        customerName: formData.customerName.trim(),
-        phone: formData.phone.trim(),
-        productName: formData.productName.trim(),
-        category: formData.category,
-        amount: amount,
-        billNumber: formData.billNumber.trim(),
-        description: formData.description.trim(),
-        date: serverTimestamp(),
-        isExistingCustomer: !!selectedCustomer
+        vendorId,
+        vendorName: form.customerName,
+        customerId: vendorId, // Also save as customerId for compatibility
+        customerName: form.customerName,
+        phone: form.phone,
+        date: new Date(form.date),
+        category: form.category,
+        company: form.company,
+        unit: form.unit,
+        quantity: Number(form.quantity),
+        price: Number(form.price),
+        amount: form.amount,
+        remainingAmount: form.amount,
+        productName: `${form.company} ${form.category} (${form.quantity} ${form.unit})`,
+        type: 'customer_purchase',
+        createdAt: serverTimestamp()
       });
 
-      // ✅ Show success message
-      showSnackbar(
-        selectedCustomer 
-          ? `Entry added for existing customer: ${formData.customerName}`
-          : `New customer created: ${formData.customerName}`,
-        'success'
-      );
+      alert('Customer purchase recorded successfully!');
 
-      resetCustomer();
-      
-    } catch (error) {
-      console.error('Error saving entry:', error);
-      showSnackbar('Failed to save entry. Please try again.', 'error');
+      // Reset form but keep customer if they want to add more purchases
+      setForm({
+        ...form,
+        date: new Date().toISOString().slice(0, 10),
+        category: '',
+        company: '',
+        unit: '',
+        quantity: '',
+        price: '',
+        amount: 0
+      });
+      setSelectedVendor(null);
+
+    } catch (err) {
+      console.error(err);
+      alert('Save failed: ' + err.message);
     } finally {
-      setLoading(false); // ✅ Reset loading state
+      submitLock.current = false;
+      setSaving(false);
     }
   };
 
-  /* ------------------ DESKTOP PANEL ------------------ */
-  const DesktopPanel = () => (
-    <Stack spacing={2}>
-      <Card sx={{ p: 2 }}>
-        <Typography fontWeight={700}>Live Preview</Typography>
-        <Divider sx={{ my: 1 }} />
-        <Typography>Name: {formData.customerName || '-'}</Typography>
-        <Typography>Phone: {formData.phone || '-'}</Typography>
-        <Typography>Category: {formData.category || '-'}</Typography>
-        <Typography>Amount: ₹{formData.amount || 0}</Typography>
+  /* ---------------- CLEAR SELECTION ---------------- */
+  const handleClearSelection = () => {
+    setSelectedVendor(null);
+    setForm(f => ({ ...f, customerName: '', phone: '' }));
+  };
 
-        {selectedCustomer && (
-          <>
-            <Divider sx={{ my: 1 }} />
-            <Typography>
-              Current Balance: ₹{selectedCustomer.balance || 0}
-            </Typography>
-            <Typography fontWeight={700} color="error.main">
-              New Balance: ₹
-              {(selectedCustomer.balance || 0) + Number(formData.amount || 0)}
-            </Typography>
-          </>
-        )}
-      </Card>
-
-      {selectedCustomer && (
-        <Card sx={{ p: 2, bgcolor: '#FFF5F5' }}>
-          <Typography fontWeight={700}>Existing Customer</Typography>
-          <Typography>{selectedCustomer.customerName}</Typography>
-          <Typography variant="body2">{selectedCustomer.phone}</Typography>
-          <Chip
-            sx={{ mt: 1 }}
-            label={selectedCustomer.balance > 0 ? 'Pending' : 'Paid'}
-            icon={selectedCustomer.balance > 0 ? <Pending /> : <CheckCircle />}
-            color={selectedCustomer.balance > 0 ? 'error' : 'success'}
-          />
-        </Card>
-      )}
-
-      <Card sx={{ p: 2 }}>
-        <Stack direction="row" spacing={1}>
-          <Info color="primary" />
-          <Typography fontWeight={700}>Tips</Typography>
-        </Stack>
-        <Typography variant="body2" mt={1}>
-          • Select existing customer to avoid duplicates
-        </Typography>
-        <Typography variant="body2">
-          • Phone number gives faster matching
-        </Typography>
-      </Card>
-    </Stack>
-  );
-
+  /* ---------------- UI ---------------- */
   return (
-    <Container maxWidth="lg" sx={{ py: 3 }}>
-      {/* ✅ Snackbar for success/error messages */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert 
-          onClose={() => setSnackbar({ ...snackbar, open: false })} 
-          severity={snackbar.severity}
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+    <Container maxWidth="md">
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h6" fontWeight={700} mb={2}>
+          Add Customer Purchase
+        </Typography>
 
-      <Grid container spacing={3}>
-        {/* FORM */}
-        <Grid item xs={12} md={7}>
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" fontWeight={700} mb={2}>
-              Add Customer Entry
-            </Typography>
-
-            {selectedCustomer && (
-              <Card sx={{ mb: 2, p: 2, bgcolor: '#FFF5F5' }}>
-                <Typography fontWeight={700}>
-                  Existing Customer Selected
-                </Typography>
-                <Typography variant="body2">
-                  {selectedCustomer.customerName} • {selectedCustomer.phone}
-                </Typography>
-                <Button size="small" onClick={resetCustomer}>
-                  Change Customer
-                </Button>
-              </Card>
-            )}
-
-            <form onSubmit={handleSubmit}>
+        {loading ? (
+          <Box sx={{ textAlign: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            {/* Customer/Vendor Name Field */}
+            <Box sx={{ position: 'relative' }}>
               <TextField
                 fullWidth
-                label="Customer Name"
-                name="customerName"
-                value={formData.customerName}
-                onChange={handleChange}
-                sx={{ mb: 1.5 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Person />
+                label="Customer/Vendor Name"
+                value={form.customerName}
+                onChange={e => {
+                  setForm({ ...form, customerName: e.target.value });
+                  setSelectedVendor(null);
+                }}
+                required
+                autoComplete="off"
+                InputProps={{ 
+                  startAdornment: <InputAdornment position="start"><Business /></InputAdornment>,
+                  endAdornment: selectedVendor && (
+                    <InputAdornment position="end">
+                      <Button
+                        size="small"
+                        onClick={handleClearSelection}
+                        sx={{ mr: -1 }}
+                      >
+                        Clear
+                      </Button>
                     </InputAdornment>
                   )
                 }}
+                helperText="Start typing vendor name..."
               />
 
-              {suggestions.length > 0 && (
-                <Box sx={{ mb: 2, border: '1px solid #eee' }}>
-                  {suggestions.map(c => (
-                    <Box
-                      key={c.id}
-                      onClick={() => !loading && handleSelectCustomer(c)}
-                      sx={{ 
-                        p: 1.5, 
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        opacity: loading ? 0.7 : 1,
-                        '&:hover': { bgcolor: loading ? 'transparent' : '#f5f5f5' }
-                      }}
-                    >
-                      <Typography fontWeight={600}>{c.customerName}</Typography>
-                      <Typography variant="caption">{c.phone}</Typography>
-                    </Box>
-                  ))}
-                </Box>
-              )}
-
-              <TextField
-                fullWidth
-                label="Phone"
-                name="phone"
-                value={formData.phone}
-                onChange={handleChange}
-                sx={{ mb: 1.5 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Phone />
-                    </InputAdornment>
-                  )
-                }}
-              />
-
-              <TextField
-                fullWidth
-                label="Product"
-                name="productName"
-                value={formData.productName}
-                onChange={handleChange}
-                sx={{ mb: 1.5 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Store />
-                    </InputAdornment>
-                  )
-                }}
-              />
-
-              <Grid container spacing={1} sx={{ mb: 2 }}>
-                {categories.map(c => (
-                  <Grid item xs={6} key={c.en}>
-                    <Button
-                      fullWidth
-                      variant={formData.category === c.en ? 'contained' : 'outlined'}
-                      onClick={() => !loading && setFormData({ ...formData, category: c.en })}
-                      disabled={loading}
-                    >
-                      {c.en} ({c.ta})
-                    </Button>
-                  </Grid>
-                ))}
-              </Grid>
-
-              <TextField
-                fullWidth
-                label="Amount"
-                type="number"
-                name="amount"
-                value={formData.amount}
-                onChange={handleChange}
-                sx={{ mb: 1.5 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <AttachMoney />
-                    </InputAdornment>
-                  )
-                }}
-              />
-
-              <TextField
-                fullWidth
-                label="Bill Number"
-                name="billNumber"
-                value={formData.billNumber}
-                onChange={handleChange}
-                sx={{ mb: 1.5 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Receipt />
-                    </InputAdornment>
-                  )
-                }}
-              />
-
-              <TextField
-                fullWidth
-                multiline
-                rows={3}
-                label="Description"
-                name="description"
-                value={formData.description}
-                onChange={handleChange}
-                sx={{ mb: 2 }}
-                disabled={loading}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Description />
-                    </InputAdornment>
-                  )
-                }}
-              />
-
-              <Button
-                fullWidth
-                type="submit"
-                startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <Add />}
-                variant="contained"
-                disabled={loading}
-                sx={{ 
-                  py: 1.4, 
-                  fontWeight: 700,
-                  position: 'relative',
-                  '&:disabled': {
-                    bgcolor: 'primary.main',
-                    opacity: 0.7
-                  }
-                }}
-              >
-                {loading ? 'SAVING...' : 'SAVE ENTRY'}
-              </Button>
-
-              {loading && (
-                <Typography 
-                  variant="caption" 
-                  color="text.secondary" 
+              {/* Vendor Suggestions Dropdown */}
+              {suggestions.length > 0 && !selectedVendor && (
+                <Paper 
                   sx={{ 
-                    display: 'block', 
-                    textAlign: 'center', 
-                    mt: 1 
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    zIndex: 10,
+                    mt: 0.5,
+                    maxHeight: 300,
+                    overflow: 'auto',
+                    border: 1,
+                    borderColor: 'divider',
+                    boxShadow: 3
                   }}
                 >
-                  Please wait while saving...
-                </Typography>
+                  {suggestions.map(v => (
+                    <Box 
+                      key={v.id} 
+                      sx={{ 
+                        p: 1.5, 
+                        cursor: 'pointer',
+                        borderBottom: '1px solid #eee',
+                        '&:last-child': { borderBottom: 0 },
+                        '&:hover': { 
+                          bgcolor: 'primary.light',
+                          color: 'primary.contrastText'
+                        }
+                      }} 
+                      onClick={() => selectVendor(v)}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Person fontSize="small" />
+                        <Box flex={1}>
+                          <Typography fontWeight={600} variant="body2">
+                            {v.vendorName}
+                          </Typography>
+                          <Typography variant="caption">
+                            {v.phone || 'No phone'} | Balance: ₹{v.balance || 0}
+                          </Typography>
+                        </Box>
+                        {v.balance > 0 && (
+                          <Chip 
+                            label="Owes you" 
+                            size="small" 
+                            color="success" 
+                            sx={{ height: 20, fontSize: '0.7rem' }}
+                          />
+                        )}
+                        {v.balance < 0 && (
+                          <Chip 
+                            label="You owe" 
+                            size="small" 
+                            color="error" 
+                            sx={{ height: 20, fontSize: '0.7rem' }}
+                          />
+                        )}
+                      </Stack>
+                    </Box>
+                  ))}
+                </Paper>
               )}
-            </form>
-          </Paper>
-        </Grid>
+            </Box>
 
-        {/* DESKTOP PANEL */}
-        {isDesktop && (
-          <Grid item md={5}>
-            <DesktopPanel />
-          </Grid>
+            {selectedVendor && (
+              <Alert severity="info" sx={{ mt: 2, mb: 2 }}>
+                <Typography variant="body2">
+                  Selected: <strong>{selectedVendor.vendorName}</strong> | 
+                  Phone: {selectedVendor.phone || 'N/A'} | 
+                  Current Balance: ₹{selectedVendor.balance || 0}
+                </Typography>
+              </Alert>
+            )}
+
+            <TextField 
+              fullWidth 
+              label="Phone" 
+              value={form.phone}
+              onChange={e => setForm({ ...form, phone: e.target.value })}
+              sx={{ mt: 2 }}
+              InputProps={{ startAdornment: <InputAdornment position="start"><Phone /></InputAdornment> }}
+              disabled={!!selectedVendor}
+              helperText={selectedVendor ? "Phone from vendor record" : "Enter phone if new"}
+            />
+
+            <TextField 
+              fullWidth 
+              type="date" 
+              label="Date" 
+              value={form.date}
+              onChange={e => setForm({ ...form, date: e.target.value })}
+              sx={{ mt: 2 }} 
+              InputLabelProps={{ shrink: true }}
+              InputProps={{ startAdornment: <InputAdornment position="start"><CalendarToday /></InputAdornment> }}
+            />
+
+            <TextField 
+              select 
+              fullWidth 
+              label="Category" 
+              value={form.category}
+              onChange={e => setForm({ ...form, category: e.target.value, company: '', unit: '' })}
+              sx={{ mt: 2 }}
+              InputProps={{ startAdornment: <InputAdornment position="start"><CategoryIcon /></InputAdornment> }}
+            >
+              {categories.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+            </TextField>
+
+            <TextField 
+              select 
+              fullWidth 
+              label="Company" 
+              value={form.company}
+              onChange={e => handleCompanySelect(e.target.value)}
+              sx={{ mt: 2 }}
+              disabled={!form.category}
+              InputProps={{ startAdornment: <InputAdornment position="start"><Store /></InputAdornment> }}
+            >
+              {filteredCompanies.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+            </TextField>
+
+            <Grid container spacing={2} sx={{ mt: 2 }}>
+              <Grid item xs={6}>
+                <TextField 
+                  fullWidth 
+                  label={`Quantity (${form.unit || 'unit'})`} 
+                  type="number"
+                  value={form.quantity}
+                  onChange={e => setForm({ ...form, quantity: e.target.value })}
+                  disabled={!form.company}
+                  InputProps={{ startAdornment: <InputAdornment position="start"><Numbers /></InputAdornment> }}
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <TextField 
+                  fullWidth 
+                  label="Price" 
+                  type="number"
+                  value={form.price}
+                  onChange={e => setForm({ ...form, price: e.target.value })}
+                  disabled={!form.company}
+                  InputProps={{ startAdornment: <InputAdornment position="start"><AttachMoney /></InputAdornment> }}
+                />
+              </Grid>
+            </Grid>
+
+            <TextField 
+              fullWidth 
+              label="Total Amount" 
+              value={form.amount}
+              sx={{ mt: 2 }} 
+              InputProps={{ 
+                readOnly: true,
+                startAdornment: <InputAdornment position="start">₹</InputAdornment>
+              }}
+            />
+
+            <Stack direction="row" spacing={2} sx={{ mt: 3 }}>
+              <Button
+                variant="outlined"
+                fullWidth
+                startIcon={<Add />}
+                onClick={() => navigate('/vendors')}
+                sx={{ py: 1.2 }}
+              >
+                Add New Vendor
+              </Button>
+              <Button 
+                fullWidth 
+                variant="contained" 
+                type="submit"
+                sx={{ py: 1.2 }} 
+                disabled={saving || !selectedVendor}
+              >
+                {saving ? 'Saving...' : 'Save Purchase'}
+              </Button>
+            </Stack>
+
+            <Alert severity="info" sx={{ mt: 2 }}>
+              <Typography variant="body2">
+                • Only existing vendors can make purchases<br/>
+                • Select vendor from dropdown (starts showing from first letter)<br/>
+                • Vendor balance will increase when purchase is recorded
+              </Typography>
+            </Alert>
+          </form>
         )}
-      </Grid>
+      </Paper>
+
+      {/* New Vendor Dialog */}
+      <Dialog open={showNewCustomerDialog} onClose={handleCancelNewVendor}>
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Business />
+            <Typography variant="h6" fontWeight={600}>
+              Vendor Not Found
+            </Typography>
+          </Stack>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" paragraph>
+            Vendor <strong>"{newCustomerName}"</strong> does not exist in the system.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" paragraph>
+            You need to create this vendor in the Vendor List before recording a purchase.
+          </Typography>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Purchase cannot be recorded for non-existent vendors.
+          </Alert>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button onClick={handleCancelNewVendor}>
+            Cancel & Clear
+          </Button>
+          <Button 
+            variant="contained" 
+            onClick={handleGoToVendorList}
+            startIcon={<Add />}
+          >
+            Go to Vendor List
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

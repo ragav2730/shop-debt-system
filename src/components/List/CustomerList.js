@@ -14,7 +14,6 @@ import {
   Stack,
   useTheme,
   useMediaQuery,
-  Grid,
   Avatar,
   Divider,
   InputAdornment
@@ -26,12 +25,17 @@ import {
   FilterList,
   Phone,
   ArrowForward,
-  CheckCircle,
   Pending
 } from '@mui/icons-material';
 
 import { Link as RouterLink } from 'react-router-dom';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  onSnapshot,
+  orderBy,
+  where
+} from 'firebase/firestore';
 import { db } from '../../services/firebase';
 
 const categories = ['All', 'Cement', 'Bricks', 'Steel', 'Sheet', 'Other'];
@@ -40,92 +44,106 @@ const CustomerList = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  const [customers, setCustomers] = useState([]);
-  const [filteredCustomers, setFilteredCustomers] = useState([]);
+  const [vendors, setVendors] = useState([]); // Changed from customers to vendors
+  const [transactions, setTransactions] = useState([]);
+  const [filteredVendors, setFilteredVendors] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
 
+  /* ================= LOAD VENDORS (AS CUSTOMERS) ================= */
   useEffect(() => {
-    const q = query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
-    return onSnapshot(q, snap => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setCustomers(data);
-      setFilteredCustomers(data);
-    });
+    return onSnapshot(
+      query(collection(db, 'vendors'), orderBy('vendorName')),
+      snap => {
+        const vendorsList = snap.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+          customerName: d.data().vendorName, // Map for compatibility
+          balance: d.data().balance || 0
+        }));
+        setVendors(vendorsList);
+      }
+    );
   }, []);
 
+  /* ================= LOAD TRANSACTIONS ================= */
   useEffect(() => {
-    let filtered = customers;
+    return onSnapshot(
+      collection(db, 'transactions'),
+      snap => {
+        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    );
+  }, []);
 
+  /* ================= FILTER LOGIC ================= */
+  useEffect(() => {
+    // Only vendors with positive balance (they owe you money)
+    let activeVendors = vendors.filter(v => (v.balance || 0) > 0);
+
+    // Category filter
     if (selectedCategory !== 'All') {
-      filtered = filtered.filter(c => c.category === selectedCategory);
-    }
+      const vendorIdsWithCategory = new Set(
+        transactions
+          .filter(t =>
+            t.category === selectedCategory &&
+            (t.remainingAmount ?? t.amount) > 0
+          )
+          .map(t => t.vendorId || t.customerId) // Check both vendorId and customerId
+      );
 
-    if (searchTerm) {
-      filtered = filtered.filter(c =>
-        c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.phone.includes(searchTerm)
+      activeVendors = activeVendors.filter(v =>
+        vendorIdsWithCategory.has(v.id)
       );
     }
 
-    setFilteredCustomers(filtered);
-  }, [selectedCategory, searchTerm, customers]);
+    // Search
+    if (searchTerm) {
+      activeVendors = activeVendors.filter(v =>
+        v.vendorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.phone?.includes(searchTerm)
+      );
+    }
 
-  /* ---------- STATS ---------- */
-  const totalCustomers = customers.length;
-  const pendingCount = customers.filter(c => c.balance > 0).length;
-  const totalBalance = customers.reduce((s, c) => s + (c.balance || 0), 0);
-  const todayAdded = customers.filter(c => {
-    const d = c.createdAt?.toDate();
-    return d && d.toDateString() === new Date().toDateString();
-  }).length;
+    setFilteredVendors(activeVendors);
+  }, [vendors, transactions, selectedCategory, searchTerm]);
 
+  /* ================= HELPERS ================= */
   const getInitials = name =>
     name?.split(' ').map(n => n[0]).join('').slice(0, 2);
 
   const handlePhoneCall = phone => {
-    window.location.href = `tel:${phone.replace(/[^\d+]/g, '')}`;
+    window.location.href = `tel:${phone}`;
   };
 
-  /* ---------- CUSTOMER CARD (MOBILE-FIRST) ---------- */
-  const CustomerCard = ({ customer }) => (
-    <Card
-      sx={{
-        mb: 2,
-        borderRadius: 4,
-        bgcolor: '#FFF7F7',
-        border: '1px solid #F1DCDC',
-        boxShadow: 'none'
-      }}
-    >
-      <CardContent sx={{ p: 2 }}>
+  /* ================= VENDOR CARD ================= */
+  const VendorCard = ({ vendor }) => (
+    <Card sx={{ mb: 2, borderRadius: 4, bgcolor: '#FFF7F7', boxShadow: 'none' }}>
+      <CardContent>
         <Stack direction="row" justifyContent="space-between">
           <Stack direction="row" spacing={2}>
-            <Avatar sx={{ bgcolor: '#C62828', fontWeight: 700 }}>
-              {getInitials(customer.customerName)}
+            <Avatar sx={{ bgcolor: '#C62828' }}>
+              {getInitials(vendor.vendorName)}
             </Avatar>
             <Box>
               <Typography fontWeight={700}>
-                {customer.customerName}
+                {vendor.vendorName}
               </Typography>
-              <Button
-                onClick={() => handlePhoneCall(customer.phone)}
-                startIcon={<Phone fontSize="small" />}
-                sx={{
-                  p: 0,
-                  minWidth: 'auto',
-                  textTransform: 'none',
-                  color: '#B71C1C'
-                }}
-              >
-                {customer.phone} (அலைபேசி)
-              </Button>
+              {vendor.phone && (
+                <Button
+                  onClick={() => handlePhoneCall(vendor.phone)}
+                  startIcon={<Phone fontSize="small" />}
+                  sx={{ p: 0, textTransform: 'none', color: '#B71C1C' }}
+                >
+                  {vendor.phone}
+                </Button>
+              )}
             </Box>
           </Stack>
 
           <IconButton
             component={RouterLink}
-            to={`/list/${customer.id}`}
+            to={`/vendors/${vendor.id}`} // Changed to vendor detail page
             sx={{ bgcolor: '#FFECEC' }}
           >
             <ArrowForward />
@@ -134,173 +152,79 @@ const CustomerList = () => {
 
         <Divider sx={{ my: 1.5 }} />
 
-        <Grid container spacing={1.5}>
-          <Grid item xs={6}>
-            <Typography variant="caption">Total</Typography>
-            <Typography fontWeight={700}>
-              ₹{customer.amount?.toFixed(2)}
-            </Typography>
-          </Grid>
-
-          <Grid item xs={6}>
-            <Typography variant="caption">Balance</Typography>
-            <Typography
-              fontWeight={700}
-              color={customer.balance > 0 ? 'error.main' : 'success.main'}
-            >
-              ₹{customer.balance?.toFixed(2)}
-            </Typography>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Stack direction="row" justifyContent="space-between">
-              <Chip
-                size="small"
-                label={
-                  customer.balance > 0
-                    ? 'Pending (நிலுவை)'
-                    : 'Paid (செலுத்தப்பட்டது)'
-                }
-                icon={customer.balance > 0 ? <Pending /> : <CheckCircle />}
-                sx={{
-                  bgcolor: customer.balance > 0 ? '#FFD6D6' : '#E6F7EC',
-                  color: customer.balance > 0 ? '#C62828' : '#2E7D32',
-                  fontWeight: 600
-                }}
-              />
-              <Typography variant="caption">
-                {customer.createdAt?.toDate().toLocaleDateString('ta-IN')}
-              </Typography>
-            </Stack>
-          </Grid>
-        </Grid>
+        <Stack direction="row" justifyContent="space-between">
+          <Typography color="error.main" fontWeight={700}>
+            ₹{vendor.balance || 0}
+          </Typography>
+          <Chip
+            size="small"
+            label="Pending"
+            icon={<Pending />}
+            sx={{ bgcolor: '#FFD6D6', color: '#C62828' }}
+          />
+        </Stack>
       </CardContent>
     </Card>
   );
 
   return (
-    <Container maxWidth="lg" sx={{ py: isMobile ? 1 : 3 }}>
-      <Paper
-        sx={{
-          p: isMobile ? 2 : 3,
-          borderRadius: 4,
-          bgcolor: '#FFFFFF'
-        }}
-      >
-        {/* ---------- HEADER ---------- */}
-        <Stack
-          direction={isMobile ? 'column' : 'row'}
-          justifyContent="space-between"
-          alignItems={isMobile ? 'stretch' : 'center'}
-          spacing={2}
-          mb={3}
-        >
+    <Container maxWidth="lg">
+      <Paper sx={{ p: 3, borderRadius: 4 }}>
+        <Stack direction="row" justifyContent="space-between" mb={3}>
           <Typography variant="h5" fontWeight={800} color="#C62828">
-            கடன் வாடிக்கையாளர்கள்
+            Pending Customers
           </Typography>
 
-          {/* Desktop compact button | Mobile full */}
           <Button
             component={RouterLink}
-            to="/entry"
+            to="/vendors" // Changed to go to vendor list to add new customer
             startIcon={<PersonAdd />}
-            fullWidth={isMobile}
-            sx={{
-              px: isMobile ? 2 : 2.5,
-              py: isMobile ? 1.4 : 1,
-              borderRadius: 3,
-              fontWeight: 700,
-              fontSize: isMobile ? '1rem' : '0.85rem',
-              maxWidth: isMobile ? '100%' : 220,
-              background: 'linear-gradient(135deg,#E53935,#B71C1C)',
-              boxShadow: 'none'
-            }}
             variant="contained"
           >
             Add Customer
           </Button>
         </Stack>
 
-        {/* ---------- STATS (MOBILE SAFE) ---------- */}
-        <Grid container spacing={1.5} sx={{ mb: 2 }}>
-          {[
-            { label: 'Total', value: totalCustomers },
-            { label: 'Pending', value: pendingCount },
-            { label: 'Total Balance', value: `₹${totalBalance.toFixed(0)}` },
-            { label: 'Today Added', value: todayAdded }
-          ].map((s, i) => (
-            <Grid item xs={6} key={i}>
-              <Card
-                sx={{
-                  p: 1.5,
-                  borderRadius: 3,
-                  bgcolor: '#FFF5F5',
-                  border: '1px solid #F3DADA',
-                  boxShadow: 'none',
-                  minHeight: 72
-                }}
-              >
-                <Typography variant="caption" color="text.secondary">
-                  {s.label}
-                </Typography>
-                <Typography fontWeight={800} color="#B71C1C">
-                  {s.value}
-                </Typography>
-              </Card>
-            </Grid>
+        {/* SEARCH */}
+        <TextField
+          fullWidth
+          size="small"
+          label="Search"
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          sx={{ mb: 2 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Search />
+              </InputAdornment>
+            )
+          }}
+        />
+
+        {/* CATEGORY */}
+        <TextField
+          fullWidth
+          select
+          size="small"
+          label="Category"
+          value={selectedCategory}
+          onChange={e => setSelectedCategory(e.target.value)}
+          sx={{ mb: 2 }}
+        >
+          {categories.map(c => (
+            <MenuItem key={c} value={c}>{c}</MenuItem>
           ))}
-        </Grid>
+        </TextField>
 
-        {/* ---------- SEARCH ---------- */}
-        <Box sx={{ mb: 2 }}>
-          <TextField
-            fullWidth
-            size="small"
-            label="Search (தேடல்)"
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            sx={{ mb: 1.5 }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search />
-                </InputAdornment>
-              )
-            }}
-          />
-
-          <TextField
-            fullWidth
-            select
-            size="small"
-            label="Category (வகை)"
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <FilterList />
-                </InputAdornment>
-              )
-            }}
-          >
-            {categories.map(c => (
-              <MenuItem key={c} value={c}>{c}</MenuItem>
-            ))}
-          </TextField>
-        </Box>
-
-        {/* ---------- LIST ---------- */}
-        {filteredCustomers.map(c => (
-          <CustomerCard key={c.id} customer={c} />
+        {filteredVendors.map(v => (
+          <VendorCard key={v.id} vendor={v} />
         ))}
 
-        {filteredCustomers.length === 0 && (
-          <Box textAlign="center" py={5}>
-            <Typography color="text.secondary">
-              No customers found
-            </Typography>
-          </Box>
+        {filteredVendors.length === 0 && (
+          <Typography align="center" color="text.secondary">
+            No matching customers
+          </Typography>
         )}
       </Paper>
     </Container>
