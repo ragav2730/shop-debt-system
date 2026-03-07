@@ -30,7 +30,13 @@ import {
   ListItemSecondaryAction,
   Chip,
   Divider,
-  IconButton
+  IconButton,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
+  FormControl,
+  FormLabel,
+  LinearProgress
 } from '@mui/material';
 
 import {
@@ -43,7 +49,8 @@ import {
   serverTimestamp,
   orderBy,
   where,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 
 import { db } from '../../services/firebase';
@@ -61,7 +68,10 @@ import {
   Close,
   CalendarToday,
   Inventory,
-  Business
+  Business,
+  Equalizer,
+  Person,
+  DoneAll
 } from '@mui/icons-material';
 
 import { Link as RouterLink } from 'react-router-dom';
@@ -70,12 +80,13 @@ const Payment = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [vendors, setVendors] = useState([]); // Changed from customers to vendors
+  const [vendors, setVendors] = useState([]);
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [vendorTransactions, setVendorTransactions] = useState([]);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('Cash');
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [settleType, setSettleType] = useState('individual'); // 'individual' or 'normal'
 
   const [allPayments, setAllPayments] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
@@ -92,6 +103,9 @@ const Payment = () => {
   const [selectPurchaseDialog, setSelectPurchaseDialog] = useState(false);
   const [selectedPurchase, setSelectedPurchase] = useState(null);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+
+  // Preview for normal settle
+  const [distributionPreview, setDistributionPreview] = useState([]);
 
   /* ================= FETCH VENDORS ================= */
   useEffect(() => {
@@ -157,6 +171,9 @@ const Payment = () => {
       
       console.log('Loaded vendor pending transactions:', pendingTransactions);
       setVendorTransactions(pendingTransactions);
+      
+      // Clear distribution preview
+      setDistributionPreview([]);
     } catch (error) {
       console.error('Error loading vendor transactions:', error);
       setSnackbar({
@@ -169,12 +186,79 @@ const Payment = () => {
     }
   };
 
+  /* ================= CALCULATE NORMAL DISTRIBUTION ================= */
+  const calculateNormalDistribution = (amount, transactions) => {
+    if (!transactions.length || !amount || Number(amount) <= 0) return [];
+    
+    const paymentAmt = Number(amount);
+    const pendingTransactions = transactions.filter(t => t.remainingAmount > 0);
+    
+    if (pendingTransactions.length === 0) return [];
+    
+    // Calculate total pending
+    const totalPending = pendingTransactions.reduce((sum, t) => sum + t.remainingAmount, 0);
+    
+    if (paymentAmt >= totalPending) {
+      // If payment covers everything, distribute fully
+      return pendingTransactions.map(t => ({
+        ...t,
+        allocatedAmount: t.remainingAmount,
+        newRemaining: 0,
+        status: 'paid'
+      }));
+    }
+    
+    // Calculate equal distribution
+    const equalShare = paymentAmt / pendingTransactions.length;
+    
+    // First round: allocate equal shares
+    let remainingToAllocate = paymentAmt;
+    const distribution = pendingTransactions.map(t => {
+      const allocated = Math.min(equalShare, t.remainingAmount);
+      remainingToAllocate -= allocated;
+      return {
+        ...t,
+        allocatedAmount: allocated,
+        newRemaining: t.remainingAmount - allocated,
+        status: allocated === t.remainingAmount ? 'paid' : 'partial'
+      };
+    });
+    
+    // Second round: distribute remaining amount (due to rounding)
+    if (remainingToAllocate > 0.01) {
+      for (let i = 0; i < distribution.length && remainingToAllocate > 0.01; i++) {
+        const txn = distribution[i];
+        const maxCanTake = txn.remainingAmount - txn.allocatedAmount;
+        if (maxCanTake > 0) {
+          const extra = Math.min(remainingToAllocate, maxCanTake);
+          distribution[i].allocatedAmount += extra;
+          distribution[i].newRemaining -= extra;
+          remainingToAllocate -= extra;
+        }
+      }
+    }
+    
+    return distribution;
+  };
+
+  /* ================= UPDATE PREVIEW WHEN AMOUNT OR SETTLE TYPE CHANGES ================= */
+  useEffect(() => {
+    if (settleType === 'normal' && selectedVendor && paymentAmount && Number(paymentAmount) > 0 && vendorTransactions.length > 0) {
+      const preview = calculateNormalDistribution(paymentAmount, vendorTransactions);
+      setDistributionPreview(preview);
+    } else {
+      setDistributionPreview([]);
+    }
+  }, [paymentAmount, settleType, vendorTransactions, selectedVendor]);
+
   /* ================= HANDLE VENDOR SELECTION ================= */
   const handleVendorSelect = (vendor) => {
     console.log('Selected vendor:', vendor);
     setSelectedVendor(vendor);
     setPaymentAmount('');
     setSelectedPurchase(null);
+    setSettleType('individual'); // Reset to individual by default
+    setDistributionPreview([]);
     
     if (vendor) {
       loadVendorTransactions(vendor.id);
@@ -256,8 +340,8 @@ const Payment = () => {
     return name || `Purchase ${formatDate(transaction.date)}`;
   };
 
-  /* ================= OPEN PURCHASE SELECTION DIALOG ================= */
-  const openPurchaseSelection = () => {
+  /* ================= OPEN PAYMENT CONFIRMATION ================= */
+  const openPaymentConfirmation = () => {
     if (!selectedVendor || !paymentAmount || Number(paymentAmount) <= 0) {
       setSnackbar({
         open: true,
@@ -277,8 +361,6 @@ const Payment = () => {
       return;
     }
 
-    console.log('Vendor pending purchases:', vendorTransactions);
-    
     if (vendorTransactions.length === 0) {
       setSnackbar({
         open: true,
@@ -288,11 +370,137 @@ const Payment = () => {
       return;
     }
 
-    setSelectPurchaseDialog(true);
+    if (settleType === 'individual') {
+      // For individual, open purchase selection dialog
+      setSelectPurchaseDialog(true);
+    } else {
+      // For normal, go directly to payment confirmation
+      handleNormalPayment();
+    }
   };
 
-  /* ================= HANDLE PAYMENT ================= */
-  const handlePayment = async () => {
+  /* ================= HANDLE NORMAL PAYMENT ================= */
+  const handleNormalPayment = async () => {
+    if (!selectedVendor || !paymentAmount || distributionPreview.length === 0) return;
+
+    const amt = Number(paymentAmount);
+    if (amt <= 0) {
+      setSnackbar({
+        open: true,
+        message: 'Please enter a valid payment amount',
+        severity: 'error'
+      });
+      return;
+    }
+
+    if (amt > selectedVendor.balance) {
+      setSnackbar({
+        open: true,
+        message: `Payment cannot exceed vendor balance of ₹${selectedVendor.balance}`,
+        severity: 'error'
+      });
+      return;
+    }
+
+    // Double confirmation for normal settle
+    const confirmPayment = window.confirm(
+      `⚠️ NORMAL SETTLE\n\n` +
+      `Amount: ₹${amt}\n` +
+      `Will be distributed across ${distributionPreview.length} purchases\n\n` +
+      `Distribution:\n` +
+      distributionPreview.map(d => 
+        `• ${getProductName(d)}: ₹${d.allocatedAmount.toFixed(2)} (Remaining: ₹${d.newRemaining.toFixed(2)})`
+      ).join('\n') +
+      `\n\nProceed with this distribution?`
+    );
+
+    if (!confirmPayment) return;
+
+    setProcessingPayment(true);
+
+    try {
+      const batch = writeBatch(db);
+      
+      // Calculate total allocated (should equal payment amount)
+      const totalAllocated = distributionPreview.reduce((sum, d) => sum + d.allocatedAmount, 0);
+      
+      // Update each transaction
+      distributionPreview.forEach(txn => {
+        const transactionRef = doc(db, 'transactions', txn.id);
+        batch.update(transactionRef, {
+          remainingAmount: txn.newRemaining,
+          status: txn.newRemaining <= 0 ? 'paid' : 'partial',
+          lastPaymentDate: serverTimestamp()
+        });
+      });
+
+      // Update vendor balance
+      const vendorRef = doc(db, 'vendors', selectedVendor.id);
+      const newVendorBalance = selectedVendor.balance - amt;
+      batch.update(vendorRef, {
+        balance: newVendorBalance,
+        updatedAt: serverTimestamp()
+      });
+
+      // Create a single payment record
+      const paymentData = {
+        vendorId: selectedVendor.id,
+        vendorName: selectedVendor.vendorName,
+        amount: amt,
+        paymentMode,
+        previousBalance: selectedVendor.balance,
+        newBalance: newVendorBalance,
+        date: serverTimestamp(),
+        settledType: 'normal',
+        type: 'customer_payment',
+        notes: `Normal settle distributed across ${distributionPreview.length} purchases`,
+        distribution: distributionPreview.map(d => ({
+          transactionId: d.id,
+          productName: getProductName(d),
+          allocatedAmount: d.allocatedAmount,
+          newRemaining: d.newRemaining
+        }))
+      };
+
+      const paymentRef = doc(collection(db, 'payments'));
+      batch.set(paymentRef, paymentData);
+
+      // Execute batch
+      await batch.commit();
+
+      // Success handling
+      setShowSuccess(true);
+      setSnackbar({
+        open: true,
+        message: `Payment of ₹${amt} distributed across ${distributionPreview.length} purchases`,
+        severity: 'success'
+      });
+
+      // Reload vendor transactions
+      loadVendorTransactions(selectedVendor.id);
+
+      setTimeout(() => {
+        setSelectedVendor(null);
+        setVendorTransactions([]);
+        setPaymentAmount('');
+        setDistributionPreview([]);
+        setProcessingPayment(false);
+        setShowSuccess(false);
+      }, 1500);
+
+    } catch (error) {
+      console.error('Normal payment error:', error);
+      setSnackbar({
+        open: true,
+        message: 'Payment failed. Please try again.',
+        severity: 'error'
+      });
+      setProcessingPayment(false);
+    }
+  };
+
+  /* ================= HANDLE INDIVIDUAL PAYMENT ================= */
+  const handleIndividualPayment = async () => {
     if (!selectedVendor || !selectedPurchase || !paymentAmount) return;
 
     const amt = Number(paymentAmount);
@@ -368,7 +576,7 @@ const Payment = () => {
         date: serverTimestamp(),
         settledType: 'individual',
         notes: `Individual settle for ${getProductName(selectedPurchase)}`,
-        type: 'customer_payment' // Add type for filtering
+        type: 'customer_payment'
       });
 
       // Reset everything
@@ -430,7 +638,7 @@ const Payment = () => {
 
       <Container sx={{ py: 2 }}>
         <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
-          Payment Collection (Individual Settle)
+          Payment Collection
         </Typography>
 
         {/* PAYMENT FORM */}
@@ -498,6 +706,37 @@ const Payment = () => {
                   </Stack>
                 </Paper>
 
+                {/* Settle Type Selection */}
+                <FormControl component="fieldset" sx={{ mt: 3 }}>
+                  <FormLabel component="legend">Settlement Type</FormLabel>
+                  <RadioGroup
+                    row
+                    value={settleType}
+                    onChange={(e) => setSettleType(e.target.value)}
+                  >
+                    <FormControlLabel 
+                      value="individual" 
+                      control={<Radio />} 
+                      label={
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Person fontSize="small" />
+                          <span>Individual Settle</span>
+                        </Stack>
+                      } 
+                    />
+                    <FormControlLabel 
+                      value="normal" 
+                      control={<Radio />} 
+                      label={
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Equalizer fontSize="small" />
+                          <span>Normal Settle (Distribute Equally)</span>
+                        </Stack>
+                      } 
+                    />
+                  </RadioGroup>
+                </FormControl>
+
                 {/* Payment Amount */}
                 <TextField
                   fullWidth
@@ -505,12 +744,57 @@ const Payment = () => {
                   type="number"
                   value={paymentAmount}
                   onChange={e => setPaymentAmount(e.target.value)}
-                  sx={{ mt: 3 }}
+                  sx={{ mt: 2 }}
                   InputProps={{
                     startAdornment: <Typography sx={{ mr: 1 }}>₹</Typography>,
                   }}
                   helperText={`Enter amount up to ₹${selectedVendor.balance}`}
                 />
+
+                {/* Normal Settle Preview */}
+                {settleType === 'normal' && distributionPreview.length > 0 && (
+                  <Paper sx={{ mt: 3, p: 2, bgcolor: '#e8f5e8', borderRadius: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+                      <DoneAll color="success" />
+                      <Typography variant="subtitle2" fontWeight={600} color="success.dark">
+                        Distribution Preview
+                      </Typography>
+                    </Stack>
+                    
+                    {distributionPreview.map((item, index) => (
+                      <Box key={item.id} sx={{ mb: 1.5 }}>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography variant="body2" fontWeight={500}>
+                            {getProductName(item)}
+                          </Typography>
+                          <Typography variant="body2" fontWeight={600} color="success.main">
+                            ₹{item.allocatedAmount.toFixed(2)}
+                          </Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography variant="caption" color="text.secondary">
+                            Before: ₹{item.remainingAmount}
+                          </Typography>
+                          <Typography variant="caption" color="info.main">
+                            After: ₹{item.newRemaining.toFixed(2)}
+                          </Typography>
+                        </Stack>
+                        {index < distributionPreview.length - 1 && (
+                          <Divider sx={{ mt: 1 }} />
+                        )}
+                      </Box>
+                    ))}
+                    
+                    <Box sx={{ mt: 2, pt: 2, borderTop: '2px dashed #4caf50' }}>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography fontWeight={600}>Total Payment</Typography>
+                        <Typography fontWeight={700} color="success.main">
+                          ₹{distributionPreview.reduce((sum, d) => sum + d.allocatedAmount, 0).toFixed(2)}
+                        </Typography>
+                      </Stack>
+                    </Box>
+                  </Paper>
+                )}
 
                 {/* Payment Method */}
                 <Typography sx={{ mt: 3, mb: 1 }} fontWeight={600}>
@@ -550,7 +834,12 @@ const Payment = () => {
                     background: 'linear-gradient(135deg,#007AFF,#4DA3FF)'
                   }}
                   variant="contained"
-                  disabled={processingPayment || !paymentAmount || Number(paymentAmount) <= 0}
+                  disabled={
+                    processingPayment || 
+                    !paymentAmount || 
+                    Number(paymentAmount) <= 0 ||
+                    (settleType === 'normal' && distributionPreview.length === 0)
+                  }
                   startIcon={
                     processingPayment ? (
                       <CircularProgress size={18} />
@@ -558,16 +847,27 @@ const Payment = () => {
                       <PaymentIcon />
                     )
                   }
-                  onClick={openPurchaseSelection}
+                  onClick={openPaymentConfirmation}
                 >
-                  {processingPayment ? 'Processing...' : 'Select Purchase & Pay'}
+                  {processingPayment 
+                    ? 'Processing...' 
+                    : settleType === 'individual' 
+                      ? 'Select Purchase & Pay' 
+                      : `Pay & Distribute to ${distributionPreview.length} Purchases`
+                  }
                 </Button>
+
+                {processingPayment && (
+                  <Box sx={{ width: '100%', mt: 2 }}>
+                    <LinearProgress />
+                  </Box>
+                )}
               </>
             )}
           </CardContent>
         </Card>
 
-        {/* PURCHASE SELECTION DIALOG */}
+        {/* INDIVIDUAL PURCHASE SELECTION DIALOG */}
         <Dialog
           open={selectPurchaseDialog}
           onClose={() => !processingPayment && setSelectPurchaseDialog(false)}
@@ -711,8 +1011,8 @@ const Payment = () => {
             </Button>
             <Button
               variant="contained"
-              onClick={handlePayment}
-              disabled={!selectedPurchase || processingPayment || Number(paymentAmount) > selectedPurchase.remainingAmount}
+              onClick={handleIndividualPayment}
+              disabled={!selectedPurchase || processingPayment || Number(paymentAmount) > selectedPurchase?.remainingAmount}
               startIcon={processingPayment ? <CircularProgress size={20} /> : <CheckCircle />}
             >
               {processingPayment ? 'Processing...' : `Pay ₹${paymentAmount}`}
@@ -754,9 +1054,30 @@ const Payment = () => {
                       {p.productName}
                     </Typography>
                   )}
-                  {p.settledType === 'individual' && (
-                    <Chip label="Individual Settle" size="small" sx={{ mt: 0.5 }} />
-                  )}
+                  <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+                    {p.settledType === 'individual' ? (
+                      <Chip 
+                        label="Individual Settle" 
+                        size="small" 
+                        color="primary"
+                        variant="outlined"
+                      />
+                    ) : (
+                      <Chip 
+                        label="Normal Settle" 
+                        size="small" 
+                        color="success"
+                        variant="outlined"
+                      />
+                    )}
+                    {p.distribution && (
+                      <Chip 
+                        label={`${p.distribution.length} purchases`} 
+                        size="small" 
+                        variant="outlined"
+                      />
+                    )}
+                  </Stack>
                 </Box>
                 <Typography color="success.main" fontWeight={700}>
                   ₹{p.amount}

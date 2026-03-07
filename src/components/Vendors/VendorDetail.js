@@ -15,7 +15,8 @@ import {
   CheckCircle, Close, Payment, Refresh, BarChart,
   Visibility, Business, People, History,
   Inventory, Store, AccountBalance, LocalShipping, Payment as PaymentIcon,
-  AccountBalanceWallet, Phone, Email, Delete, Warning
+  AccountBalanceWallet, Phone, Email, Delete, Warning,
+  PictureAsPdf, TableChart, TextFields
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -26,6 +27,7 @@ import {
   deleteDoc, writeBatch
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { exportToPDF, exportToExcel, exportToCSV } from '../../utils/reportGenerator';
 
 const VendorDetail = () => {
   const { id } = useParams();
@@ -58,10 +60,21 @@ const VendorDetail = () => {
     address: ''
   });
 
-  // Delete state
+  // Delete states
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [deletingVendor, setDeletingVendor] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
+
+  // Delete purchase states
+  const [openDeletePurchaseDialog, setOpenDeletePurchaseDialog] = useState(false);
+  const [purchaseToDelete, setPurchaseToDelete] = useState(null);
+  const [deletingPurchase, setDeletingPurchase] = useState(false);
+  const [deletePurchaseConfirmation, setDeletePurchaseConfirmation] = useState('');
+
+  // Download dialog state
+  const [downloadDialog, setDownloadDialog] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState('pdf');
+  const [downloading, setDownloading] = useState(false);
 
   const [notification, setNotification] = useState({
     show: false,
@@ -314,6 +327,47 @@ const VendorDetail = () => {
     }
   };
 
+  // Download report
+  const handleDownloadReport = async () => {
+    if (!vendor || transactions.length === 0) {
+      showNotification('No data available for report', 'info');
+      return;
+    }
+
+    setDownloading(true);
+
+    try {
+      // Sort by date (newest first)
+      const reportData = [...transactions].sort((a, b) => {
+        const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date || 0);
+        const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date || 0);
+        return dateB - dateA;
+      });
+
+      const filename = `${vendor.vendorName}_Customer_Report_${new Date().toISOString().split('T')[0]}`;
+
+      switch (downloadFormat) {
+        case 'pdf':
+          exportToPDF(reportData, vendor.vendorName, 'All Customers', filename);
+          break;
+        case 'excel':
+          exportToExcel(reportData, vendor.vendorName, 'All Customers', filename);
+          break;
+        case 'csv':
+          exportToCSV(reportData, vendor.vendorName, 'All Customers', filename);
+          break;
+      }
+
+      showNotification(`${downloadFormat.toUpperCase()} report downloaded successfully`, 'success');
+      setDownloadDialog(false);
+    } catch (error) {
+      console.error('Download error:', error);
+      showNotification('Error downloading report', 'error');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   // Update vendor
   const handleUpdateVendor = async () => {
     if (!editForm.vendorName.trim()) {
@@ -343,6 +397,143 @@ const VendorDetail = () => {
     } catch (error) {
       console.error('Error updating vendor:', error);
       showNotification('Update failed', 'error');
+    }
+  };
+
+  // Open delete purchase dialog
+  const handleOpenDeletePurchaseDialog = (purchase) => {
+    setPurchaseToDelete(purchase);
+    setOpenDeletePurchaseDialog(true);
+    setDeletePurchaseConfirmation('');
+  };
+
+  // Delete individual purchase
+  const handleDeletePurchase = async () => {
+    if (deletePurchaseConfirmation !== 'DELETE') {
+      showNotification('Please type DELETE to confirm', 'error');
+      return;
+    }
+
+    if (!purchaseToDelete) return;
+
+    // First confirmation
+    const confirm1 = window.confirm(
+      `⚠️ Are you sure you want to delete this purchase?\n\n` +
+      `Customer: ${purchaseToDelete.customerName}\n` +
+      `Product: ${getProductName(purchaseToDelete)}\n` +
+      `Amount: ₹${purchaseToDelete.amount}\n` +
+      `Remaining: ₹${purchaseToDelete.remainingAmount}\n\n` +
+      `This will also delete all related payments and update customer balance.`
+    );
+    
+    if (!confirm1) return;
+
+    setDeletingPurchase(true);
+
+    try {
+      const batch = writeBatch(db);
+      const customerId = purchaseToDelete.customerId;
+      
+      // 1. Delete the purchase transaction
+      const purchaseRef = doc(db, 'transactions', purchaseToDelete.id);
+      batch.delete(purchaseRef);
+      
+      // 2. Find and delete all related payments for this purchase
+      const paymentsToDelete = payments.filter(p => 
+        p.transactionId === purchaseToDelete.id
+      );
+      
+      paymentsToDelete.forEach(payment => {
+        const paymentRef = doc(db, 'payments', payment.id);
+        batch.delete(paymentRef);
+      });
+      
+      // 3. Update vendor balance
+      const newVendorBalance = Math.max(0, vendor.balance - purchaseToDelete.remainingAmount);
+      const vendorRef = doc(db, 'vendors', id);
+      batch.update(vendorRef, {
+        balance: newVendorBalance,
+        updatedAt: serverTimestamp()
+      });
+      
+      // 4. Update customer balance if customer exists
+      if (customerId && customerId.trim() !== '') {
+        try {
+          const customerDoc = await getDoc(doc(db, 'customers', customerId));
+          if (customerDoc.exists()) {
+            // Get all remaining transactions for this customer (excluding deleted one)
+            const customerTransactionsQuery = query(
+              collection(db, 'transactions'),
+              where('customerId', '==', customerId)
+            );
+            
+            const customerTransactionsSnap = await getDocs(customerTransactionsQuery);
+            const remainingTransactions = customerTransactionsSnap.docs
+              .map(doc => ({ 
+                id: doc.id, 
+                ...doc.data(),
+                amount: doc.data().amount || 0,
+                remainingAmount: doc.data().remainingAmount || doc.data().amount || 0
+              }))
+              .filter(t => t.id !== purchaseToDelete.id); // Exclude deleted transaction
+            
+            // Get all remaining payments for this customer
+            const customerPaymentsQuery = query(
+              collection(db, 'payments'),
+              where('customerId', '==', customerId)
+            );
+            
+            const customerPaymentsSnap = await getDocs(customerPaymentsQuery);
+            const remainingPayments = customerPaymentsSnap.docs
+              .map(doc => ({ 
+                id: doc.id, 
+                ...doc.data(),
+                amount: Math.abs(doc.data().amount) || 0
+              }))
+              .filter(p => !paymentsToDelete.some(pd => pd.id === p.id)); // Exclude deleted payments
+            
+            // Calculate new balance
+            const totalPurchases = remainingTransactions.reduce((sum, t) => sum + t.amount, 0);
+            const totalPayments = remainingPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newCustomerBalance = totalPurchases - totalPayments;
+            
+            // Update customer balance
+            const customerRef = doc(db, 'customers', customerId);
+            batch.update(customerRef, {
+              balance: newCustomerBalance,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (customerError) {
+          console.error('Error updating customer balance:', customerError);
+          // Continue even if customer update fails
+        }
+      }
+      
+      // Execute batch
+      await batch.commit();
+      
+      // Update local state
+      setVendor(prev => ({
+        ...prev,
+        balance: newVendorBalance
+      }));
+      
+      showNotification(
+        `Purchase deleted successfully. Vendor balance updated to ₹${newVendorBalance}`,
+        'success'
+      );
+      
+      // Close dialog
+      setOpenDeletePurchaseDialog(false);
+      setPurchaseToDelete(null);
+      setDeletePurchaseConfirmation('');
+      
+    } catch (error) {
+      console.error('Error deleting purchase:', error);
+      showNotification('Failed to delete purchase', 'error');
+    } finally {
+      setDeletingPurchase(false);
     }
   };
 
@@ -722,6 +913,22 @@ const VendorDetail = () => {
               Make Payment
             </Button>
             
+            {/* Download Report Button */}
+            <Button
+              variant="contained"
+              color="success"
+              startIcon={<Download />}
+              onClick={() => setDownloadDialog(true)}
+              sx={{ 
+                flex: isMobile ? 1 : 'none',
+                bgcolor: '#2e7d32',
+                '&:hover': { bgcolor: '#1b5e20' }
+              }}
+              fullWidth={isMobile}
+            >
+              Download Report
+            </Button>
+            
             <Box sx={{ flex: 1 }} />
             
             <TextField
@@ -783,14 +990,33 @@ const VendorDetail = () => {
                                 <ListItem 
                                   sx={{ 
                                     borderBottom: '1px solid #f0f0f0',
-                                    py: 2
+                                    py: 2,
+                                    '&:hover': {
+                                      backgroundColor: '#fafafa'
+                                    }
                                   }}
                                 >
                                   <ListItemText
                                     primary={
-                                      <Typography fontWeight={600}>
-                                        {transaction.customerName}
-                                      </Typography>
+                                      <Stack direction="row" alignItems="center" spacing={1}>
+                                        <Typography fontWeight={600} flex={1}>
+                                          {transaction.customerName}
+                                        </Typography>
+                                        <Tooltip title="Delete Purchase">
+                                          <IconButton 
+                                            size="small"
+                                            onClick={() => handleOpenDeletePurchaseDialog(transaction)}
+                                            sx={{ 
+                                              color: 'error.main',
+                                              '&:hover': {
+                                                backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                                              }
+                                            }}
+                                          >
+                                            <Delete fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      </Stack>
                                     }
                                     secondary={
                                       <>
@@ -842,6 +1068,7 @@ const VendorDetail = () => {
                               <TableCell align="right">Total</TableCell>
                               <TableCell align="right">Remaining</TableCell>
                               <TableCell>Status</TableCell>
+                              <TableCell>Actions</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -890,6 +1117,22 @@ const VendorDetail = () => {
                                         size="small"
                                         color={isPaid ? 'success' : 'warning'}
                                       />
+                                    </TableCell>
+                                    <TableCell>
+                                      <Tooltip title="Delete Purchase">
+                                        <IconButton 
+                                          size="small"
+                                          onClick={() => handleOpenDeletePurchaseDialog(transaction)}
+                                          sx={{ 
+                                            color: 'error.main',
+                                            '&:hover': {
+                                              backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                                            }
+                                          }}
+                                        >
+                                          <Delete fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
                                     </TableCell>
                                   </TableRow>
                                 );
@@ -1037,6 +1280,148 @@ const VendorDetail = () => {
             )}
           </Paper>
         </Container>
+
+        {/* Download Report Dialog */}
+        <Dialog 
+          open={downloadDialog} 
+          onClose={() => !downloading && setDownloadDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600}>
+              <Download sx={{ verticalAlign: 'middle', mr: 1 }} />
+              Download Customer Report
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={3} sx={{ mt: 1 }}>
+              <Alert severity="info">
+                Download complete customer purchase report including all transactions with details.
+              </Alert>
+
+              <Box>
+                <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                  Select Report Format
+                </Typography>
+                <Stack direction="row" spacing={2}>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      flex: 1,
+                      cursor: 'pointer',
+                      borderColor: downloadFormat === 'pdf' ? 'primary.main' : 'divider',
+                      bgcolor: downloadFormat === 'pdf' ? 'primary.light' : 'transparent',
+                      '&:hover': {
+                        borderColor: 'primary.main',
+                      }
+                    }}
+                    onClick={() => setDownloadFormat('pdf')}
+                  >
+                    <Stack alignItems="center" spacing={1}>
+                      <PictureAsPdf sx={{ fontSize: 24, color: downloadFormat === 'pdf' ? 'primary.main' : 'text.primary' }} />
+                      <Typography variant="subtitle2" color={downloadFormat === 'pdf' ? 'primary.main' : 'text.primary'}>
+                        PDF
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" align="center">
+                        Best for printing
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                  
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      flex: 1,
+                      cursor: 'pointer',
+                      borderColor: downloadFormat === 'excel' ? 'success.main' : 'divider',
+                      bgcolor: downloadFormat === 'excel' ? 'success.light' : 'transparent',
+                      '&:hover': {
+                        borderColor: 'success.main',
+                      }
+                    }}
+                    onClick={() => setDownloadFormat('excel')}
+                  >
+                    <Stack alignItems="center" spacing={1}>
+                      <TableChart sx={{ fontSize: 24, color: downloadFormat === 'excel' ? 'success.main' : 'text.primary' }} />
+                      <Typography variant="subtitle2" color={downloadFormat === 'excel' ? 'success.main' : 'text.primary'}>
+                        Excel
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" align="center">
+                        Best for analysis
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                  
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      flex: 1,
+                      cursor: 'pointer',
+                      borderColor: downloadFormat === 'csv' ? 'secondary.main' : 'divider',
+                      bgcolor: downloadFormat === 'csv' ? 'secondary.light' : 'transparent',
+                      '&:hover': {
+                        borderColor: 'secondary.main',
+                      }
+                    }}
+                    onClick={() => setDownloadFormat('csv')}
+                  >
+                    <Stack alignItems="center" spacing={1}>
+                      <TextFields sx={{ fontSize: 24, color: downloadFormat === 'csv' ? 'secondary.main' : 'text.primary' }} />
+                      <Typography variant="subtitle2" color={downloadFormat === 'csv' ? 'secondary.main' : 'text.primary'}>
+                        CSV
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" align="center">
+                        Simple format
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                </Stack>
+              </Box>
+
+              <Box>
+                <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                  Report Details
+                </Typography>
+                <Paper variant="outlined" sx={{ p: 2, bgcolor: '#fafafa' }}>
+                  <Typography variant="body2">
+                    <strong>Vendor:</strong> {vendor?.vendorName}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Total Transactions:</strong> {transactions.length}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>Report Includes:</strong> Date, Customer, Product, Category, Quantity, Price, Total, Remaining, Status
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    <strong>Total Balance:</strong> ₹{vendor?.balance}
+                  </Typography>
+                </Paper>
+              </Box>
+            </Stack>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => setDownloadDialog(false)}
+              disabled={downloading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleDownloadReport}
+              disabled={downloading}
+              startIcon={downloading ? <CircularProgress size={20} /> : <Download />}
+            >
+              {downloading ? 'Downloading...' : `Download ${downloadFormat.toUpperCase()}`}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Individual Settle Dialog */}
         <Dialog 
@@ -1317,6 +1702,122 @@ const VendorDetail = () => {
               startIcon={deletingVendor ? <CircularProgress size={20} /> : <Delete />}
             >
               {deletingVendor ? 'Deleting...' : 'Delete Permanently'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Purchase Dialog */}
+        <Dialog 
+          open={openDeletePurchaseDialog} 
+          onClose={() => !deletingPurchase && setOpenDeletePurchaseDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600} color="error">
+              <Warning sx={{ verticalAlign: 'middle', mr: 1 }} />
+              Delete Purchase
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {purchaseToDelete?.customerName} • {purchaseToDelete && formatDate(purchaseToDelete.date)}
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={3}>
+              <Alert severity="error" icon={false}>
+                <Typography fontWeight={600} gutterBottom>
+                  ⚠️ Delete Purchase Entry
+                </Typography>
+                <Typography variant="body2">
+                  This action will delete the following purchase:
+                </Typography>
+                <List dense sx={{ pl: 2 }}>
+                  <ListItem sx={{ py: 0 }}>
+                    • Product: {purchaseToDelete && getProductName(purchaseToDelete)}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Customer: {purchaseToDelete?.customerName}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Amount: ₹{purchaseToDelete?.amount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Remaining: ₹{purchaseToDelete?.remainingAmount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Date: {purchaseToDelete && formatFullDate(purchaseToDelete.date)}
+                  </ListItem>
+                </List>
+              </Alert>
+
+              <Alert severity="warning">
+                This will also:
+                <Typography variant="body2">
+                  • Delete all related payment records
+                </Typography>
+                <Typography variant="body2">
+                  • Update vendor balance (₹{vendor?.balance} → ₹{Math.max(0, vendor?.balance - (purchaseToDelete?.remainingAmount || 0))})
+                </Typography>
+                {purchaseToDelete?.customerId && (
+                  <Typography variant="body2">
+                    • Update customer balance
+                  </Typography>
+                )}
+              </Alert>
+
+              <TextField
+                fullWidth
+                label={`Type "DELETE" to confirm`}
+                value={deletePurchaseConfirmation}
+                onChange={(e) => setDeletePurchaseConfirmation(e.target.value)}
+                placeholder="DELETE"
+                disabled={deletingPurchase}
+                sx={{ mt: 2 }}
+                helperText="Type the word DELETE in uppercase to confirm deletion"
+              />
+
+              <Box sx={{ bgcolor: '#fff3e0', p: 2, borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight={600} gutterBottom>
+                  Confirmation Checklist:
+                </Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2">
+                    ✓ This purchase was entered incorrectly
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand this purchase and all related payments will be deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand vendor and customer balances will be updated
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ This action cannot be undone
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => {
+                setOpenDeletePurchaseDialog(false);
+                setPurchaseToDelete(null);
+                setDeletePurchaseConfirmation('');
+              }}
+              disabled={deletingPurchase}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              onClick={handleDeletePurchase}
+              disabled={deletePurchaseConfirmation !== 'DELETE' || deletingPurchase}
+              startIcon={deletingPurchase ? <CircularProgress size={20} /> : <Delete />}
+            >
+              {deletingPurchase ? 'Deleting...' : 'Delete Purchase'}
             </Button>
           </DialogActions>
         </Dialog>
