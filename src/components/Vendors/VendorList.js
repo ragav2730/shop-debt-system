@@ -103,7 +103,8 @@ const VendorList = () => {
         const vendorList = snap.docs.map(d => ({
           id: d.id,
           ...d.data(),
-          balance: d.data().balance || 0
+          balance: d.data().balance || 0,
+          initialBalance: d.data().initialBalance || 0 // read initialBalance if present
         }));
         
         // Get customer purchase statistics for each vendor
@@ -205,6 +206,7 @@ const VendorList = () => {
     return name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
   };
 
+  // ✅ FIXED: store both balance and initialBalance
   const handleAddVendor = async () => {
     if (!newVendor.name.trim()) {
       alert('Vendor name is required');
@@ -220,7 +222,8 @@ const VendorList = () => {
         phone: newVendor.phone,
         email: newVendor.email,
         address: newVendor.address,
-        balance: initialBalance,
+        balance: initialBalance,               // total balance (initial + purchases)
+        initialBalance: initialBalance,        // store separately for payment page
         status: initialBalance === 0 ? 'paid' : initialBalance > 0 ? 'owed' : 'owe',
         createdAt: new Date(),
         updatedAt: new Date()

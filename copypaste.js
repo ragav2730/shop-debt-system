@@ -1,273 +1,74 @@
-after adding cusotomer it is not updating in CustomerList.js and in Customer Details
 
-import React, { useState, useEffect } from 'react';
-import {
-  Container,
-  Paper,
-  Typography,
-  Chip,
-  TextField,
-  MenuItem,
-  Box,
-  IconButton,
-  Button,
-  Card,
-  CardContent,
-  Stack,
-  useTheme,
-  useMediaQuery,
-  Grid,
-  Avatar,
-  Divider,
-  InputAdornment
-} from '@mui/material';
-
-import {
-  PersonAdd,
-  Search,
-  FilterList,
-  Phone,
-  ArrowForward,
-  Pending
-} from '@mui/icons-material';
-
-import { Link as RouterLink } from 'react-router-dom';
-import {
-  collection,
-  query,
-  onSnapshot,
-  orderBy
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
-
-const categories = ['All', 'Cement', 'Bricks', 'Steel', 'Sheet', 'Other'];
-
-const CustomerList = () => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-
-  const [customers, setCustomers] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [filteredCustomers, setFilteredCustomers] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [searchTerm, setSearchTerm] = useState('');
-
-  /* ================= LOAD CUSTOMERS ================= */
-  useEffect(() => {
-    return onSnapshot(
-      query(collection(db, 'customers'), orderBy('createdAt', 'desc')),
-      snap => {
-        setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }
-    );
-  }, []);
-
-  /* ================= LOAD TRANSACTIONS ================= */
-  useEffect(() => {
-    return onSnapshot(
-      collection(db, 'transactions'),
-      snap => {
-        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }
-    );
-  }, []);
-
-  /* ================= FILTER LOGIC ================= */
-  useEffect(() => {
-    // Only customers with balance
-    let activeCustomers = customers.filter(c => (c.balance || 0) > 0);
-
-    // Category filter (BASED ON TRANSACTIONS)
-    if (selectedCategory !== 'All') {
-      const customerIdsWithCategory = new Set(
-        transactions
-          .filter(t =>
-            t.category === selectedCategory &&
-            (t.remainingAmount ?? t.amount) > 0
-          )
-          .map(t => t.customerId)
-      );
-
-      activeCustomers = activeCustomers.filter(c =>
-        customerIdsWithCategory.has(c.id)
-      );
-    }
-
-    // Search
-    if (searchTerm) {
-      activeCustomers = activeCustomers.filter(c =>
-        c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.phone?.includes(searchTerm)
-      );
-    }
-
-    setFilteredCustomers(activeCustomers);
-  }, [customers, transactions, selectedCategory, searchTerm]);
-
-  /* ================= HELPERS ================= */
-  const getInitials = name =>
-    name?.split(' ').map(n => n[0]).join('').slice(0, 2);
-
-  const handlePhoneCall = phone => {
-    window.location.href = `tel:${phone}`;
-  };
-
-  /* ================= CUSTOMER CARD ================= */
-  const CustomerCard = ({ customer }) => (
-    <Card sx={{ mb: 2, borderRadius: 4, bgcolor: '#FFF7F7', boxShadow: 'none' }}>
-      <CardContent>
-        <Stack direction="row" justifyContent="space-between">
-          <Stack direction="row" spacing={2}>
-            <Avatar sx={{ bgcolor: '#C62828' }}>
-              {getInitials(customer.customerName)}
-            </Avatar>
-            <Box>
-              <Typography fontWeight={700}>
-                {customer.customerName}
-              </Typography>
-              <Button
-                onClick={() => handlePhoneCall(customer.phone)}
-                startIcon={<Phone fontSize="small" />}
-                sx={{ p: 0, textTransform: 'none', color: '#B71C1C' }}
-              >
-                {customer.phone}
-              </Button>
-            </Box>
-          </Stack>
-
-          <IconButton
-            component={RouterLink}
-            to={`/list/${customer.id}`}
-            sx={{ bgcolor: '#FFECEC' }}
-          >
-            <ArrowForward />
-          </IconButton>
-        </Stack>
-
-        <Divider sx={{ my: 1.5 }} />
-
-        <Stack direction="row" justifyContent="space-between">
-          <Typography color="error.main" fontWeight={700}>
-            ₹{customer.balance}
-          </Typography>
-          <Chip
-            size="small"
-            label="Pending"
-            icon={<Pending />}
-            sx={{ bgcolor: '#FFD6D6', color: '#C62828' }}
-          />
-        </Stack>
-      </CardContent>
-    </Card>
-  );
-
-  return (
-    <Container maxWidth="lg">
-      <Paper sx={{ p: 3, borderRadius: 4 }}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
-          <Typography variant="h5" fontWeight={800} color="#C62828">
-            Pending Customers
-          </Typography>
-
-          <Button
-            component={RouterLink}
-            to="/entry"
-            startIcon={<PersonAdd />}
-            variant="contained"
-          >
-            Add Customer
-          </Button>
-        </Stack>
-
-        {/* SEARCH */}
-        <TextField
-          fullWidth
-          size="small"
-          label="Search"
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
-          sx={{ mb: 2 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Search />
-              </InputAdornment>
-            )
-          }}
-        />
-
-        {/* CATEGORY */}
-        <TextField
-          fullWidth
-          select
-          size="small"
-          label="Category"
-          value={selectedCategory}
-          onChange={e => setSelectedCategory(e.target.value)}
-          sx={{ mb: 2 }}
-        >
-          {categories.map(c => (
-            <MenuItem key={c} value={c}>{c}</MenuItem>
-          ))}
-        </TextField>
-
-        {filteredCustomers.map(c => (
-          <CustomerCard key={c.id} customer={c} />
-        ))}
-
-        {filteredCustomers.length === 0 && (
-          <Typography align="center" color="text.secondary">
-            No matching customers
-          </Typography>
-        )}
-      </Paper>
-    </Container>
-  );
-};
-
-export default CustomerList;
-
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Container, Paper, Typography, Box, Button, Card, CardContent,
-  Stack, IconButton, Dialog, DialogContent, TextField,
-  MenuItem, CircularProgress, Grid, Divider, Chip,
-  Alert, Avatar, Slide
+  Stack, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
+  TextField, MenuItem, CircularProgress, Grid, Chip, Alert,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  TablePagination, InputAdornment, Tabs, Tab, Avatar,
+  Divider, List, ListItem, ListItemText, ListItemSecondaryAction,
+  Tooltip, useTheme, useMediaQuery
 } from '@mui/material';
-
 import {
-  ArrowBack, AttachMoney, Payment as PaymentIcon, Replay,
-  Receipt, History, Paid, PendingActions, Close
+  ArrowBack, Edit, Print, Download, FilterList,
+  Search, CalendarToday, AttachMoney, Receipt, Paid, Pending,
+  CheckCircle, Close, Payment, Refresh, BarChart,
+  Visibility, Business, People, History,
+  Inventory, Store, AccountBalance, LocalShipping, Payment as PaymentIcon,
+  AccountBalanceWallet, Phone, Email, Delete, Warning
 } from '@mui/icons-material';
-
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
-  doc, getDoc, collection, query, where,
-  onSnapshot, updateDoc, addDoc, serverTimestamp,
-  orderBy, getDocs, runTransaction
+  doc, getDoc, collection, query, where, onSnapshot,
+  addDoc, updateDoc, serverTimestamp, orderBy, getDocs,
+  deleteDoc, writeBatch
 } from 'firebase/firestore';
-
 import { db } from '../../services/firebase';
 
-const CustomerDetail = () => {
+const VendorDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const lockRef = useRef(false);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.down('md'));
 
-  const [customer, setCustomer] = useState(null);
+  const [vendor, setVendor] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState(0);
+  
+  const [selectPurchaseDialog, setSelectPurchaseDialog] = useState(false);
+  const [selectedPurchase, setSelectedPurchase] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMode, setPaymentMode] = useState('Cash');
+  const [processingPayment, setProcessingPayment] = useState(false);
+  
+  const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(isMobile ? 5 : 10);
 
-  const [openPay, setOpenPay] = useState(false);
-  const [selectedTxn, setSelectedTxn] = useState(null);
-  const [payData, setPayData] = useState({ amount: '', mode: 'Cash' });
-  const [processing, setProcessing] = useState(false);
+  const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [editForm, setEditForm] = useState({
+    vendorName: '',
+    phone: '',
+    email: '',
+    address: ''
+  });
 
-  const [refundDialog, setRefundDialog] = useState(false);
-  const [refundPayment, setRefundPayment] = useState(null);
-  const [refundAmount, setRefundAmount] = useState('');
-  const [refundProcessing, setRefundProcessing] = useState(false); // Added
+  // Delete states
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [deletingVendor, setDeletingVendor] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+
+  // Delete purchase states
+  const [openDeletePurchaseDialog, setOpenDeletePurchaseDialog] = useState(false);
+  const [purchaseToDelete, setPurchaseToDelete] = useState(null);
+  const [deletingPurchase, setDeletingPurchase] = useState(false);
+  const [deletePurchaseConfirmation, setDeletePurchaseConfirmation] = useState('');
 
   const [notification, setNotification] = useState({
     show: false,
@@ -276,382 +77,130 @@ const CustomerDetail = () => {
     amount: 0
   });
 
-  // Helper function to get product name
-  const getProductName = useCallback((transaction) => {
-    if (transaction.productName) {
-      return transaction.productName;
-    }
-    
-    // Construct from available fields
-    const parts = [];
-    if (transaction.company) parts.push(transaction.company);
-    if (transaction.category) parts.push(transaction.category);
-    
-    let name = parts.join(' ');
-    
-    // Add quantity and unit if available
-    if (transaction.quantity && transaction.unit) {
-      name += ` (${transaction.quantity} ${transaction.unit})`;
-    } else if (transaction.quantity) {
-      name += ` (${transaction.quantity})`;
-    }
-    
-    return name || 'Product';
-  }, []);
-
-  /* ================= CUSTOMER ================= */
+  // Fetch vendor details
   useEffect(() => {
-    const fetchCustomer = async () => {
+    const fetchVendor = async () => {
       try {
-        const snap = await getDoc(doc(db, 'customers', id));
+        const snap = await getDoc(doc(db, 'vendors', id));
         if (!snap.exists()) {
-          navigate('/customers');
+          navigate('/vendors');
           return;
         }
-        setCustomer({ id: snap.id, ...snap.data() });
+        const vendorData = { id: snap.id, ...snap.data() };
+        setVendor(vendorData);
+        setEditForm({
+          vendorName: vendorData.vendorName || '',
+          phone: vendorData.phone || '',
+          email: vendorData.email || '',
+          address: vendorData.address || ''
+        });
         setLoading(false);
       } catch (error) {
-        console.error('Error fetching customer:', error);
+        console.error('Error fetching vendor:', error);
         setLoading(false);
       }
     };
-    
-    fetchCustomer();
+
+    fetchVendor();
   }, [id, navigate]);
 
-  /* ================= TRANSACTIONS ================= */
+  // Fetch customer purchases
   useEffect(() => {
     if (!id) return;
-    
+
     const unsubscribe = onSnapshot(
       query(
-        collection(db, 'transactions'), 
-        where('customerId', '==', id), 
+        collection(db, 'transactions'),
+        where('vendorId', '==', id),
         orderBy('date', 'desc')
       ),
       (snap) => {
-        const updatedTransactions = snap.docs.map(d => {
+        const transactionsList = snap.docs.map(d => {
           const data = d.data();
-          // Ensure we have valid remainingAmount
-          const amount = data.amount || 0;
-          const remainingAmount = data.remainingAmount ?? amount;
-          
+          const remainingAmount = data.remainingAmount ?? data.amount ?? 0;
           return {
             id: d.id,
             ...data,
-            amount,
-            remainingAmount,
+            amount: data.amount || 0,
+            remainingAmount: remainingAmount,
             date: data.date?.toDate?.() || data.date || new Date()
           };
         });
-        
-        console.log('Transactions updated:', updatedTransactions);
-        setTransactions(updatedTransactions);
-      },
-      (error) => {
-        console.error('Error listening to transactions:', error);
+        setTransactions(transactionsList);
       }
     );
-    
+
     return () => unsubscribe();
   }, [id]);
 
-  /* ================= PAYMENTS ================= */
+  // Fetch payments
   useEffect(() => {
     if (!id) return;
-    
+
     const unsubscribe = onSnapshot(
       query(
         collection(db, 'payments'),
-        where('customerId', '==', id),
-        orderBy('date', 'desc') // Changed from 'createdAt' to 'date'
+        where('vendorId', '==', id),
+        orderBy('date', 'desc')
       ),
       (snap) => {
-        const updatedPayments = snap.docs.map(d => ({ 
-          id: d.id, 
+        const paymentsList = snap.docs.map(d => ({
+          id: d.id,
           ...d.data(),
-          // Ensure date is properly handled
           date: d.data().date?.toDate?.() || d.data().date || new Date()
         }));
-        
-        console.log('Payments updated:', updatedPayments);
-        setPayments(updatedPayments);
-      },
-      (error) => {
-        console.error('Error listening to payments:', error);
+        setPayments(paymentsList);
       }
     );
-    
+
     return () => unsubscribe();
   }, [id]);
 
-  const showNotification = (message, type = 'success', amount = 0) => {
-    setNotification({
-      show: true,
-      message,
-      type,
-      amount
-    });
-
-    setTimeout(() => {
-      setNotification(prev => ({ ...prev, show: false }));
-    }, 4000);
+  // Calculate stats
+  const stats = {
+    totalSales: transactions.reduce((sum, t) => sum + (t.amount || 0), 0),
+    totalPending: transactions
+      .filter(t => (t.remainingAmount || t.amount || 0) > 0)
+      .reduce((sum, t) => sum + (t.remainingAmount || t.amount || 0), 0),
+    totalPaid: payments
+      .filter(p => p.type === 'customer_payment')
+      .reduce((sum, p) => sum + (Math.abs(p.amount) || 0), 0),
+    transactionCount: transactions.length,
+    pendingCount: transactions.filter(t => (t.remainingAmount || t.amount || 0) > 0).length
   };
 
-  /* ================= PAY ================= */
-  const handlePay = async () => {
-    if (lockRef.current || !selectedTxn || !customer) {
-      showNotification('Payment cannot be processed', 'error');
-      return;
+  // Filter transactions
+  const filteredTransactions = transactions.filter(transaction => {
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      return (
+        transaction.customerName?.toLowerCase().includes(term) ||
+        transaction.productName?.toLowerCase().includes(term) ||
+        transaction.category?.toLowerCase().includes(term)
+      );
     }
+    return true;
+  });
 
-    const amt = Number(payData.amount);
-    if (amt <= 0 || amt > selectedTxn.remainingAmount) {
-      showNotification('Invalid amount', 'error');
-      return;
-    }
+  // Filter pending transactions
+  const pendingTransactions = filteredTransactions.filter(t => (t.remainingAmount || 0) > 0);
 
-    if (amt > customer.balance) {
-      showNotification(`Cannot exceed customer balance of ₹${customer.balance}`, 'error');
-      return;
-    }
-
-    lockRef.current = true;
-    setProcessing(true);
-
+  // Format date
+  const formatDate = (date) => {
+    if (!date) return 'N/A';
     try {
-      // Calculate new values
-      const newRemaining = selectedTxn.remainingAmount - amt;
-      const newBalance = customer.balance - amt;
-      
-      console.log('Payment details:', {
-        customerId: id,
-        transactionId: selectedTxn.id,
-        amount: amt,
-        oldRemaining: selectedTxn.remainingAmount,
-        newRemaining,
-        oldBalance: customer.balance,
-        newBalance
+      const d = date.toDate ? date.toDate() : new Date(date);
+      return d.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short'
       });
-
-      // Update customer
-      await updateDoc(doc(db, 'customers', id), {
-        balance: newBalance,
-        status: newBalance > 0 ? 'pending' : 'paid',
-        updatedAt: serverTimestamp()
-      });
-
-      // Update transaction
-      await updateDoc(doc(db, 'transactions', selectedTxn.id), {
-        remainingAmount: newRemaining,
-        status: newRemaining <= 0 ? 'paid' : 'partial',
-        lastPaymentDate: serverTimestamp()
-      });
-
-      // If balance becomes 0, mark all transactions as paid
-      if (newBalance === 0) {
-        const allTxnsQuery = query(
-          collection(db, 'transactions'), 
-          where('customerId', '==', id)
-        );
-        const allTxnsSnapshot = await getDocs(allTxnsQuery);
-        
-        const updatePromises = [];
-        allTxnsSnapshot.forEach((docSnap) => {
-          const txn = docSnap.data();
-          const remaining = txn.remainingAmount || txn.amount || 0;
-          
-          if (remaining > 0 && docSnap.id !== selectedTxn.id) {
-            updatePromises.push(
-              updateDoc(docSnap.ref, {
-                remainingAmount: 0,
-                status: 'paid',
-                lastPaymentDate: serverTimestamp()
-              })
-            );
-          }
-        });
-        
-        await Promise.all(updatePromises);
-      }
-
-      // Record payment - Use consistent field names
-      const paymentData = {
-        customerId: id,
-        customerName: customer.customerName,
-        transactionId: selectedTxn.id,
-        productName: getProductName(selectedTxn),
-        amount: amt,
-        paymentMode: payData.mode,
-        previousBalance: customer.balance,
-        newBalance: newBalance,
-        type: 'payment',
-        notes: `Payment for ${getProductName(selectedTxn)}`,
-        date: serverTimestamp(), // Use 'date' field consistently
-        createdAt: serverTimestamp()
-      };
-      
-      console.log('Saving payment:', paymentData);
-      await addDoc(collection(db, 'payments'), paymentData);
-
-      // Update local state immediately for better UX
-      setCustomer(prev => ({
-        ...prev,
-        balance: newBalance,
-        status: newBalance > 0 ? 'pending' : 'paid'
-      }));
-
-      // Update transactions in local state
-      setTransactions(prev => prev.map(t => {
-        if (t.id === selectedTxn.id) {
-          return {
-            ...t,
-            remainingAmount: newRemaining,
-            status: newRemaining <= 0 ? 'paid' : 'partial'
-          };
-        }
-        // If balance is 0, mark all as paid
-        if (newBalance === 0) {
-          return {
-            ...t,
-            remainingAmount: 0,
-            status: 'paid'
-          };
-        }
-        return t;
-      }));
-
-      setOpenPay(false);
-      setPayData({ amount: '', mode: 'Cash' });
-      
-      if (newBalance === 0) {
-        showNotification(`All products fully paid! Customer balance is now ₹0`, 'success', amt);
-      } else {
-        showNotification(`Payment of ₹${amt} recorded successfully`, 'success', amt);
-      }
-      
-    } catch (err) {
-      console.error('Payment error:', err);
-      showNotification(err.message || 'Payment failed. Please try again.', 'error');
-    } finally {
-      setTimeout(() => {
-        lockRef.current = false;
-        setProcessing(false);
-      }, 1000);
+    } catch (e) {
+      return 'N/A';
     }
   };
 
-  /* ================= REFUND ================= */
-  const handleRefund = async () => {
-    // Prevent concurrent refund processing
-    if (lockRef.current || refundProcessing) {
-      showNotification('Another operation is in progress', 'error');
-      return;
-    }
-
-    const amt = Number(refundAmount);
-    if (amt <= 0) {
-      showNotification('Invalid refund amount', 'error');
-      return;
-    }
-
-    if (!refundPayment) {
-      showNotification('No payment selected for refund', 'error');
-      return;
-    }
-
-    lockRef.current = true;
-    setRefundProcessing(true);
-
-    try {
-      // Find the transaction for this refund
-      const transaction = transactions.find(t => t.id === refundPayment.transactionId);
-      if (!transaction) {
-        showNotification('Original transaction not found', 'error');
-        return;
-      }
-
-      const txnRemaining = transaction.remainingAmount || transaction.amount || 0;
-      const txnAmount = transaction.amount || 0;
-      
-      // Validate refund doesn't exceed original amount
-      if (amt + txnRemaining > txnAmount) {
-        showNotification(`Refund cannot exceed original transaction amount of ₹${txnAmount}`, 'error');
-        return;
-      }
-
-      const newRemaining = txnRemaining + amt;
-      const newBalance = customer.balance + amt;
-
-      // Update customer
-      await updateDoc(doc(db, 'customers', id), {
-        balance: newBalance,
-        status: newBalance > 0 ? 'pending' : 'paid',
-        updatedAt: serverTimestamp()
-      });
-
-      // Update transaction
-      await updateDoc(doc(db, 'transactions', refundPayment.transactionId), {
-        remainingAmount: newRemaining,
-        status: newRemaining >= txnAmount ? 'pending' : 'partial',
-        lastPaymentDate: serverTimestamp()
-      });
-
-      // Record refund payment
-      const refundData = {
-        customerId: id,
-        customerName: customer.customerName,
-        transactionId: refundPayment.transactionId,
-        productName: refundPayment.productName || getProductName(refundPayment),
-        amount: -amt,
-        paymentMode: refundPayment.paymentMode,
-        previousBalance: customer.balance,
-        newBalance: newBalance,
-        type: 'refund',
-        notes: `Refund for ${refundPayment.productName || getProductName(refundPayment)}`,
-        date: serverTimestamp(),
-        createdAt: serverTimestamp()
-      };
-      
-      console.log('Saving refund:', refundData);
-      await addDoc(collection(db, 'payments'), refundData);
-
-      // Update local state
-      setCustomer(prev => ({
-        ...prev,
-        balance: newBalance,
-        status: newBalance > 0 ? 'pending' : 'paid'
-      }));
-
-      setTransactions(prev => prev.map(t => {
-        if (t.id === refundPayment.transactionId) {
-          return {
-            ...t,
-            remainingAmount: newRemaining,
-            status: newRemaining >= txnAmount ? 'pending' : 'partial'
-          };
-        }
-        return t;
-      }));
-
-      setRefundDialog(false);
-      setRefundPayment(null);
-      setRefundAmount('');
-      
-      showNotification(`Refund of ₹${amt} processed successfully`, 'success', amt);
-      
-    } catch (err) {
-      console.error('Refund error:', err);
-      showNotification(err.message || 'Refund failed. Please try again.', 'error');
-    } finally {
-      setTimeout(() => {
-        lockRef.current = false;
-        setRefundProcessing(false);
-      }, 1000);
-    }
-  };
-
-  const formatDate = useCallback((date) => {
+  // Format full date
+  const formatFullDate = (date) => {
     if (!date) return 'N/A';
     try {
       const d = date.toDate ? date.toDate() : new Date(date);
@@ -663,413 +212,1416 @@ const CustomerDetail = () => {
     } catch (e) {
       return 'N/A';
     }
-  }, []);
+  };
 
-  // Calculate statistics
-  const totalPurchases = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-  const totalPayments = payments
-    .filter(p => p.type === 'payment')
-    .reduce((sum, p) => sum + (Math.abs(p.amount) || 0), 0);
-  const totalRefunds = payments
-    .filter(p => p.type === 'refund')
-    .reduce((sum, p) => sum + (Math.abs(p.amount) || 0), 0);
-  const netPayments = totalPayments - totalRefunds;
-  const customerBalance = customer?.balance || 0;
+  // Get product name
+  const getProductName = (transaction) => {
+    if (transaction.productName) {
+      return transaction.productName;
+    }
+    
+    const parts = [];
+    if (transaction.company) parts.push(transaction.company);
+    if (transaction.category) parts.push(transaction.category);
+    
+    let name = parts.join(' ');
+    
+    if (transaction.quantity && transaction.unit) {
+      name += ` (${transaction.quantity} ${transaction.unit})`;
+    }
+    
+    return name || 'Product';
+  };
+
+  // Handle individual settle
+  const openIndividualSettle = () => {
+    if (!vendor || vendor.balance <= 0) {
+      showNotification('No pending balance to settle', 'info');
+      return;
+    }
+    
+    if (pendingTransactions.length === 0) {
+      showNotification('No pending purchases found', 'info');
+      return;
+    }
+    
+    setPaymentAmount(Math.min(vendor.balance, pendingTransactions[0].remainingAmount).toString());
+    setSelectPurchaseDialog(true);
+  };
+
+  const handleIndividualPayment = async () => {
+    if (!vendor || !selectedPurchase || !paymentAmount) return;
+
+    const amt = Number(paymentAmount);
+    if (amt <= 0) {
+      showNotification('Please enter valid amount', 'error');
+      return;
+    }
+
+    if (amt > selectedPurchase.remainingAmount) {
+      showNotification(`Amount exceeds remaining ₹${selectedPurchase.remainingAmount}`, 'error');
+      return;
+    }
+
+    if (amt > vendor.balance) {
+      showNotification(`Amount exceeds vendor balance ₹${vendor.balance}`, 'error');
+      return;
+    }
+
+    setProcessingPayment(true);
+
+    try {
+      const newRemaining = selectedPurchase.remainingAmount - amt;
+      const newVendorBalance = vendor.balance - amt;
+
+      await updateDoc(doc(db, 'vendors', id), {
+        balance: newVendorBalance,
+        updatedAt: serverTimestamp()
+      });
+
+      await updateDoc(doc(db, 'transactions', selectedPurchase.id), {
+        remainingAmount: newRemaining,
+        status: newRemaining <= 0 ? 'paid' : 'partial',
+        lastPaymentDate: serverTimestamp()
+      });
+
+      await addDoc(collection(db, 'payments'), {
+        vendorId: id,
+        vendorName: vendor.vendorName,
+        customerId: selectedPurchase.customerId,
+        customerName: selectedPurchase.customerName,
+        transactionId: selectedPurchase.id,
+        productName: getProductName(selectedPurchase),
+        amount: amt,
+        paymentMode,
+        previousBalance: vendor.balance,
+        newBalance: newVendorBalance,
+        previousRemaining: selectedPurchase.remainingAmount,
+        newRemaining: newRemaining,
+        date: serverTimestamp(),
+        settledType: 'individual',
+        type: 'customer_payment',
+        notes: `Individual settle for ${getProductName(selectedPurchase)}`
+      });
+
+      setVendor(prev => ({
+        ...prev,
+        balance: newVendorBalance
+      }));
+
+      showNotification(`Payment of ₹${amt} recorded`, 'success', amt);
+      setSelectPurchaseDialog(false);
+      setPaymentAmount('');
+      setSelectedPurchase(null);
+    } catch (error) {
+      console.error('Payment error:', error);
+      showNotification('Payment failed', 'error');
+    } finally {
+      setProcessingPayment(false);
+    }
+  };
+
+  // Update vendor
+  const handleUpdateVendor = async () => {
+    if (!editForm.vendorName.trim()) {
+      showNotification('Vendor name is required', 'error');
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'vendors', id), {
+        vendorName: editForm.vendorName,
+        phone: editForm.phone,
+        email: editForm.email,
+        address: editForm.address,
+        updatedAt: serverTimestamp()
+      });
+
+      setVendor(prev => ({
+        ...prev,
+        vendorName: editForm.vendorName,
+        phone: editForm.phone,
+        email: editForm.email,
+        address: editForm.address
+      }));
+
+      showNotification('Vendor updated', 'success');
+      setOpenEditDialog(false);
+    } catch (error) {
+      console.error('Error updating vendor:', error);
+      showNotification('Update failed', 'error');
+    }
+  };
+
+  // Open delete purchase dialog
+  const handleOpenDeletePurchaseDialog = (purchase) => {
+    setPurchaseToDelete(purchase);
+    setOpenDeletePurchaseDialog(true);
+    setDeletePurchaseConfirmation('');
+  };
+
+  // Delete individual purchase
+  const handleDeletePurchase = async () => {
+    if (deletePurchaseConfirmation !== 'DELETE') {
+      showNotification('Please type DELETE to confirm', 'error');
+      return;
+    }
+
+    if (!purchaseToDelete) return;
+
+    // First confirmation
+    const confirm1 = window.confirm(
+      `⚠️ Are you sure you want to delete this purchase?\n\n` +
+      `Customer: ${purchaseToDelete.customerName}\n` +
+      `Product: ${getProductName(purchaseToDelete)}\n` +
+      `Amount: ₹${purchaseToDelete.amount}\n` +
+      `Remaining: ₹${purchaseToDelete.remainingAmount}\n\n` +
+      `This will also delete all related payments and update customer balance.`
+    );
+    
+    if (!confirm1) return;
+
+    setDeletingPurchase(true);
+
+    try {
+      const batch = writeBatch(db);
+      const customerId = purchaseToDelete.customerId;
+      
+      // 1. Delete the purchase transaction
+      const purchaseRef = doc(db, 'transactions', purchaseToDelete.id);
+      batch.delete(purchaseRef);
+      
+      // 2. Find and delete all related payments for this purchase
+      const paymentsToDelete = payments.filter(p => 
+        p.transactionId === purchaseToDelete.id
+      );
+      
+      paymentsToDelete.forEach(payment => {
+        const paymentRef = doc(db, 'payments', payment.id);
+        batch.delete(paymentRef);
+      });
+      
+      // 3. Update vendor balance
+      const newVendorBalance = Math.max(0, vendor.balance - purchaseToDelete.remainingAmount);
+      const vendorRef = doc(db, 'vendors', id);
+      batch.update(vendorRef, {
+        balance: newVendorBalance,
+        updatedAt: serverTimestamp()
+      });
+      
+      // 4. Update customer balance if customer exists
+      if (customerId && customerId.trim() !== '') {
+        try {
+          const customerDoc = await getDoc(doc(db, 'customers', customerId));
+          if (customerDoc.exists()) {
+            // Get all remaining transactions for this customer (excluding deleted one)
+            const customerTransactionsQuery = query(
+              collection(db, 'transactions'),
+              where('customerId', '==', customerId)
+            );
+            
+            const customerTransactionsSnap = await getDocs(customerTransactionsQuery);
+            const remainingTransactions = customerTransactionsSnap.docs
+              .map(doc => ({ 
+                id: doc.id, 
+                ...doc.data(),
+                amount: doc.data().amount || 0,
+                remainingAmount: doc.data().remainingAmount || doc.data().amount || 0
+              }))
+              .filter(t => t.id !== purchaseToDelete.id); // Exclude deleted transaction
+            
+            // Get all remaining payments for this customer
+            const customerPaymentsQuery = query(
+              collection(db, 'payments'),
+              where('customerId', '==', customerId)
+            );
+            
+            const customerPaymentsSnap = await getDocs(customerPaymentsQuery);
+            const remainingPayments = customerPaymentsSnap.docs
+              .map(doc => ({ 
+                id: doc.id, 
+                ...doc.data(),
+                amount: Math.abs(doc.data().amount) || 0
+              }))
+              .filter(p => !paymentsToDelete.some(pd => pd.id === p.id)); // Exclude deleted payments
+            
+            // Calculate new balance
+            const totalPurchases = remainingTransactions.reduce((sum, t) => sum + t.amount, 0);
+            const totalPayments = remainingPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newCustomerBalance = totalPurchases - totalPayments;
+            
+            // Update customer balance
+            const customerRef = doc(db, 'customers', customerId);
+            batch.update(customerRef, {
+              balance: newCustomerBalance,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (customerError) {
+          console.error('Error updating customer balance:', customerError);
+          // Continue even if customer update fails
+        }
+      }
+      
+      // Execute batch
+      await batch.commit();
+      
+      // Update local state
+      setVendor(prev => ({
+        ...prev,
+        balance: newVendorBalance
+      }));
+      
+      showNotification(
+        `Purchase deleted successfully. Vendor balance updated to ₹${newVendorBalance}`,
+        'success'
+      );
+      
+      // Close dialog
+      setOpenDeletePurchaseDialog(false);
+      setPurchaseToDelete(null);
+      setDeletePurchaseConfirmation('');
+      
+    } catch (error) {
+      console.error('Error deleting purchase:', error);
+      showNotification('Failed to delete purchase', 'error');
+    } finally {
+      setDeletingPurchase(false);
+    }
+  };
+
+  // Delete vendor with all associated data
+  const handleDeleteVendor = async () => {
+    if (deleteConfirmation !== 'DELETE') {
+      showNotification('Please type DELETE to confirm', 'error');
+      return;
+    }
+
+    // First confirmation
+    const confirm1 = window.confirm(
+      `⚠️ WARNING: Are you absolutely sure you want to delete "${vendor.vendorName}"?\n\n` +
+      `This will delete:\n` +
+      `• Vendor details\n` +
+      `• ${transactions.length} purchases\n` +
+      `• ${payments.length} payments\n` +
+      `• ₹${vendor.balance} balance\n\n` +
+      `Customer balances will be automatically recalculated.`
+    );
+    
+    if (!confirm1) {
+      return;
+    }
+
+    // Second confirmation for safety
+    const confirm2 = window.confirm(
+      `🚨 FINAL WARNING: This action cannot be undone!\n\n` +
+      `All data for "${vendor.vendorName}" will be permanently deleted.\n\n` +
+      `Type DELETE to confirm this permanent deletion.`
+    );
+    
+    if (!confirm2) {
+      return;
+    }
+
+    setDeletingVendor(true);
+
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Delete vendor document
+      const vendorRef = doc(db, 'vendors', id);
+      batch.delete(vendorRef);
+      
+      // 2. Get all unique customers from this vendor's transactions
+      const customerIds = [...new Set(
+        transactions
+          .map(t => t.customerId)
+          .filter(customerId => customerId && customerId.trim() !== '')
+      )];
+      
+      console.log('Customers affected:', customerIds);
+      
+      // 3. Delete all transactions for this vendor
+      transactions.forEach(transaction => {
+        const transactionRef = doc(db, 'transactions', transaction.id);
+        batch.delete(transactionRef);
+      });
+      
+      // 4. Delete all payments for this vendor
+      payments.forEach(payment => {
+        const paymentRef = doc(db, 'payments', payment.id);
+        batch.delete(paymentRef);
+      });
+      
+      // 5. Recalculate customer balances for affected customers
+      for (const customerId of customerIds) {
+        try {
+          // Get customer document to check if exists
+          const customerDoc = await getDoc(doc(db, 'customers', customerId));
+          if (!customerDoc.exists()) {
+            console.log(`Customer ${customerId} not found, skipping`);
+            continue;
+          }
+          
+          // Get all remaining transactions for this customer (excluding deleted vendor's)
+          const customerTransactionsQuery = query(
+            collection(db, 'transactions'),
+            where('customerId', '==', customerId)
+          );
+          
+          const customerTransactionsSnap = await getDocs(customerTransactionsQuery);
+          const remainingTransactions = customerTransactionsSnap.docs
+            .map(doc => ({ 
+              id: doc.id, 
+              ...doc.data(),
+              amount: doc.data().amount || 0
+            }))
+            .filter(t => t.vendorId !== id); // Exclude transactions from deleted vendor
+          
+          console.log(`Customer ${customerId} remaining transactions:`, remainingTransactions.length);
+          
+          // Get all payments for this customer
+          const customerPaymentsQuery = query(
+            collection(db, 'payments'),
+            where('customerId', '==', customerId)
+          );
+          
+          const customerPaymentsSnap = await getDocs(customerPaymentsQuery);
+          const remainingPayments = customerPaymentsSnap.docs
+            .map(doc => ({ 
+              id: doc.id, 
+              ...doc.data(),
+              amount: Math.abs(doc.data().amount) || 0
+            }))
+            .filter(p => p.vendorId !== id); // Exclude payments to deleted vendor
+          
+          // Calculate new balance
+          const totalPurchases = remainingTransactions.reduce((sum, t) => sum + t.amount, 0);
+          const totalPayments = remainingPayments.reduce((sum, p) => sum + p.amount, 0);
+          const newBalance = totalPurchases - totalPayments;
+          
+          console.log(`Customer ${customerId} balance update:`, {
+            oldBalance: customerDoc.data().balance,
+            newBalance,
+            totalPurchases,
+            totalPayments
+          });
+          
+          // Update customer balance
+          const customerRef = doc(db, 'customers', customerId);
+          batch.update(customerRef, {
+            balance: newBalance,
+            updatedAt: serverTimestamp()
+          });
+        } catch (customerError) {
+          console.error(`Error updating customer ${customerId}:`, customerError);
+          // Continue with other customers even if one fails
+        }
+      }
+      
+      // Execute all operations
+      await batch.commit();
+      
+      showNotification(
+        `Vendor "${vendor.vendorName}" and all associated data deleted successfully`, 
+        'success'
+      );
+      
+      // Navigate back to vendors list after a short delay
+      setTimeout(() => {
+        navigate('/vendors');
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error deleting vendor:', error);
+      showNotification('Error deleting vendor. Please try again.', 'error');
+    } finally {
+      setDeletingVendor(false);
+      setOpenDeleteDialog(false);
+      setDeleteConfirmation('');
+    }
+  };
+
+  // Show notification
+  const showNotification = (message, type = 'success', amount = 0) => {
+    setNotification({
+      show: true,
+      message,
+      type,
+      amount
+    });
+
+    setTimeout(() => {
+      setNotification(prev => ({ ...prev, show: false }));
+    }, 3000);
+  };
+
+  const paymentModes = ['Cash', 'UPI', 'Bank', 'Card', 'Cheque'];
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        minHeight: '100vh'
+      }}>
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 3 }}>
-      {/* Notification */}
-      <Slide direction="down" in={notification.show} mountOnEnter unmountOnExit>
-        <Box sx={{ 
-          position: 'fixed', 
-          top: 20, 
-          left: '50%', 
-          transform: 'translateX(-50%)', 
-          zIndex: 2000, 
-          width: '90%', 
-          maxWidth: 400 
-        }}>
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <Box sx={{ 
+        bgcolor: '#f5f5f5', 
+        minHeight: '100vh',
+        pb: isMobile ? 3 : 4
+      }}>
+        {/* Notification */}
+        {notification.show && (
           <Alert
             severity={notification.type}
+            sx={{
+              position: 'fixed',
+              top: 20,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 9999,
+              width: isMobile ? '90%' : '400px',
+              boxShadow: 3
+            }}
             action={
-              <IconButton 
-                size="small" 
+              <IconButton
+                size="small"
                 onClick={() => setNotification(prev => ({ ...prev, show: false }))}
               >
                 <Close fontSize="small" />
               </IconButton>
             }
           >
-            <Typography variant="body2" fontWeight={600}>
-              {notification.message}
-              {notification.amount > 0 && (
-                <Typography component="span" color="inherit" fontWeight={700}>
-                  {' '}₹{notification.amount}
-                </Typography>
-              )}
-            </Typography>
+            {notification.message}
+            {notification.amount > 0 && ` - ₹${notification.amount}`}
           </Alert>
-        </Box>
-      </Slide>
+        )}
 
-      {/* Header */}
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
-        <IconButton onClick={() => navigate(-1)}><ArrowBack /></IconButton>
-        <Box>
-          <Typography variant="h5" fontWeight={700}>{customer.customerName}</Typography>
-          <Typography variant="body2" color="text.secondary">{customer.phone}</Typography>
+        {/* Header */}
+        <Box sx={{
+          bgcolor: 'white',
+          borderBottom: '1px solid #e0e0e0',
+          py: 2
+        }}>
+          <Container maxWidth="lg">
+            <Stack direction="row" alignItems="center" spacing={2}>
+              <IconButton 
+                onClick={() => navigate('/vendors')}
+                sx={{ 
+                  color: 'primary.main'
+                }}
+              >
+                <ArrowBack />
+              </IconButton>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="h5" fontWeight={600}>
+                  {vendor.vendorName}
+                </Typography>
+                <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 0.5 }}>
+                  {vendor.phone && (
+                    <Typography variant="body2" color="text.secondary">
+                      <Phone sx={{ fontSize: 14, mr: 0.5 }} />
+                      {vendor.phone}
+                    </Typography>
+                  )}
+                  {vendor.email && (
+                    <Typography variant="body2" color="text.secondary">
+                      <Email sx={{ fontSize: 14, mr: 0.5 }} />
+                      {vendor.email}
+                    </Typography>
+                  )}
+                  <Chip 
+                    label={`Balance: ₹${vendor.balance || 0}`} 
+                    size="small"
+                    color={vendor.balance > 0 ? "error" : "success"}
+                  />
+                </Stack>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Tooltip title="Edit Vendor">
+                  <IconButton onClick={() => setOpenEditDialog(true)}>
+                    <Edit />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Delete Vendor">
+                  <IconButton 
+                    onClick={() => setOpenDeleteDialog(true)}
+                    sx={{ 
+                      color: 'error.main',
+                      '&:hover': {
+                        backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                      }
+                    }}
+                  >
+                    <Delete />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </Stack>
+          </Container>
         </Box>
-      </Stack>
 
-      {/* Balance Card */}
-      <Card sx={{ mb: 3, borderRadius: 2 }}>
-        <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box>
-              <Typography variant="body2" color="text.secondary">Total Balance</Typography>
-              <Typography variant="h3" color={customerBalance > 0 ? 'error.main' : 'success.main'}>
-                ₹{customerBalance}
+        <Container maxWidth="lg" sx={{ mt: 3 }}>
+          {/* Balance Card */}
+          <Paper sx={{ 
+            mb: 3, 
+            borderRadius: 2,
+            overflow: 'hidden'
+          }}>
+            <Box sx={{
+              bgcolor: vendor.balance > 0 ? 'error.main' : 'success.main',
+              color: 'white',
+              py: 2,
+              px: 3
+            }}>
+              <Typography variant="h4" fontWeight={700}>
+                ₹{vendor.balance}
+              </Typography>
+              <Typography variant="body2">
+                {vendor.balance > 0 ? 'Total Balance Owed' : 'All Settled'}
               </Typography>
             </Box>
-            <Chip
-              label={customerBalance > 0 ? 'Pending' : 'Paid'}
-              color={customerBalance > 0 ? 'error' : 'success'}
-              icon={customerBalance > 0 ? <PendingActions /> : <Paid />}
+            <Box sx={{ p: 3 }}>
+              <Grid container spacing={3}>
+                <Grid item xs={6} sm={3}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Total Sales
+                    </Typography>
+                    <Typography variant="h6" fontWeight={600}>
+                      ₹{stats.totalSales.toLocaleString()}
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6} sm={3}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Pending
+                    </Typography>
+                    <Typography variant="h6" fontWeight={600} color="error.main">
+                      ₹{stats.totalPending.toLocaleString()}
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6} sm={3}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Received
+                    </Typography>
+                    <Typography variant="h6" fontWeight={600} color="success.main">
+                      ₹{stats.totalPaid.toLocaleString()}
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6} sm={3}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Purchases
+                    </Typography>
+                    <Typography variant="h6" fontWeight={600}>
+                      {stats.transactionCount}
+                    </Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+          </Paper>
+
+          {/* Action Buttons */}
+          <Paper sx={{ 
+            p: 2, 
+            mb: 3, 
+            borderRadius: 2,
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            gap: 2,
+            alignItems: 'center'
+          }}>
+            <Button
+              variant="contained"
+              startIcon={<PaymentIcon />}
+              onClick={openIndividualSettle}
+              disabled={vendor.balance <= 0}
+              sx={{ flex: isMobile ? 1 : 'none' }}
+              fullWidth={isMobile}
+            >
+              Individual Settle
+            </Button>
+            
+            <Button
+              variant="outlined"
+              startIcon={<Receipt />}
+              onClick={() => navigate('/payment')}
+              sx={{ flex: isMobile ? 1 : 'none' }}
+              fullWidth={isMobile}
+            >
+              Make Payment
+            </Button>
+            
+            <Box sx={{ flex: 1 }} />
+            
+            <TextField
+              placeholder="Search purchases..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              size="small"
+              sx={{ 
+                width: isMobile ? '100%' : 250 
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search />
+                  </InputAdornment>
+                )
+              }}
             />
-          </Stack>
-          
-          {/* Quick Stats */}
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">Purchases</Typography>
-              <Typography variant="h6">₹{totalPurchases}</Typography>
-            </Grid>
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">Payments</Typography>
-              <Typography variant="h6" color="success.main">₹{netPayments}</Typography>
-            </Grid>
-            <Grid item xs={4}>
-              <Typography variant="caption" color="text.secondary">Pending</Typography>
-              <Typography variant="h6" color="error.main">₹{customerBalance}</Typography>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+          </Paper>
 
-      {/* Products Purchased Section */}
-      <Card sx={{ mb: 3, borderRadius: 2 }}>
-        <CardContent>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-            <Receipt color="primary" />
-            <Typography variant="h6" fontWeight={700}>Products Purchased ({transactions.length})</Typography>
-          </Stack>
-          
-          {transactions.length === 0 ? (
-            <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-              No products purchased yet
-            </Typography>
-          ) : (
-            <Stack spacing={2}>
-              {transactions.map(t => {
-                const remaining = t.remainingAmount || 0;
-                const isPaid = remaining <= 0;
-                const canSettle = remaining > 0 && customerBalance > 0;
-                const productName = getProductName(t);
-                
-                return (
-                  <Paper 
-                    key={t.id} 
-                    sx={{ 
-                      p: 2, 
-                      borderRadius: 2, 
-                      borderLeft: `4px solid ${isPaid ? '#4caf50' : '#ff9800'}` 
-                    }}
-                  >
-                    <Stack spacing={1.5}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                        <Box>
-                          <Typography variant="subtitle1" fontWeight={600}>
-                            {productName}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {formatDate(t.date)}
-                          </Typography>
-                          {t.category && t.company && (
-                            <Typography variant="caption" color="text.secondary" display="block">
-                              {t.category} • {t.company}
-                            </Typography>
-                          )}
-                        </Box>
-                        <Chip
-                          label={isPaid ? 'Paid' : 'Pending'}
-                          size="small"
-                          color={isPaid ? 'success' : 'warning'}
-                        />
-                      </Stack>
-                      
-                      <Grid container spacing={2}>
-                        <Grid item xs={4}>
-                          <Typography variant="caption" color="text.secondary">Total</Typography>
-                          <Typography variant="body1">₹{t.amount || 0}</Typography>
-                        </Grid>
-                        <Grid item xs={4}>
-                          <Typography variant="caption" color="text.secondary">Paid</Typography>
-                          <Typography variant="body1" color="success.main">
-                            ₹{((t.amount || 0) - remaining)}
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={4}>
-                          <Typography variant="caption" color="text.secondary">Remaining</Typography>
-                          <Typography variant="body1" color="error.main" fontWeight={600}>
-                            ₹{remaining}
-                          </Typography>
-                        </Grid>
-                      </Grid>
-                      
-                      {!isPaid && (
-                        <Button
-                          variant="contained"
-                          color="error"
-                          fullWidth
-                          startIcon={<AttachMoney />}
-                          disabled={!canSettle || processing || refundProcessing}
-                          onClick={() => {
-                            setSelectedTxn(t);
-                            setPayData({ 
-                              amount: Math.min(remaining, customerBalance), 
-                              mode: 'Cash' 
-                            });
-                            setOpenPay(true);
-                          }}
-                          size="small"
-                        >
-                          SETTLE ₹{Math.min(remaining, customerBalance)}
-                        </Button>
-                      )}
-                    </Stack>
-                  </Paper>
-                );
-              })}
-            </Stack>
-          )}
-        </CardContent>
-      </Card>
+          {/* Main Content Tabs */}
+          <Paper sx={{ borderRadius: 2, overflow: 'hidden' }}>
+            <Tabs 
+              value={activeTab} 
+              onChange={(e, val) => setActiveTab(val)}
+              variant={isMobile ? "fullWidth" : "standard"}
+              sx={{ borderBottom: 1, borderColor: 'divider' }}
+            >
+              <Tab label="Purchase History" />
+              <Tab label="Payment History" />
+              <Tab label="Reports" />
+            </Tabs>
 
-      {/* Payment History Section */}
-      <Card sx={{ borderRadius: 2 }}>
-        <CardContent>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-            <History color="primary" />
-            <Typography variant="h6" fontWeight={700}>Payment History ({payments.length})</Typography>
-          </Stack>
-          
-          {payments.length === 0 ? (
-            <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
-              No payment history yet
-            </Typography>
-          ) : (
-            <Stack spacing={1.5}>
-              {payments.map(p => {
-                const paymentProductName = p.productName || getProductName(p);
-                const isRefund = p.amount < 0;
-                const amount = Math.abs(p.amount);
-                
-                return (
-                  <Paper 
-                    key={p.id} 
-                    sx={{ 
-                      p: 2, 
-                      borderRadius: 2, 
-                      borderLeft: `4px solid ${isRefund ? '#f44336' : '#4caf50'}` 
-                    }}
-                  >
-                    <Stack spacing={1}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography 
-                          variant="body1" 
-                          fontWeight={600} 
-                          color={isRefund ? 'error.main' : 'success.main'}
-                        >
-                          {isRefund ? '🔙 Refund' : '💰 Payment'}: ₹{amount}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {formatDate(p.date)}
-                        </Typography>
-                      </Stack>
+            {/* Purchase History Tab */}
+            {activeTab === 0 && (
+              <Box>
+                {filteredTransactions.length === 0 ? (
+                  <Box sx={{ 
+                    textAlign: 'center', 
+                    py: 8,
+                    color: 'text.secondary'
+                  }}>
+                    <Inventory sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                    <Typography>No purchases found</Typography>
+                  </Box>
+                ) : (
+                  <>
+                    {isMobile ? (
+                      // Mobile view - List
+                      <List sx={{ p: 0 }}>
+                        {filteredTransactions
+                          .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                          .map((transaction) => {
+                            const remaining = transaction.remainingAmount || 0;
+                            const isPaid = remaining <= 0;
+                            
+                            return (
+                              <React.Fragment key={transaction.id}>
+                                <ListItem 
+                                  sx={{ 
+                                    borderBottom: '1px solid #f0f0f0',
+                                    py: 2,
+                                    '&:hover': {
+                                      backgroundColor: '#fafafa'
+                                    }
+                                  }}
+                                >
+                                  <ListItemText
+                                    primary={
+                                      <Stack direction="row" alignItems="center" spacing={1}>
+                                        <Typography fontWeight={600} flex={1}>
+                                          {transaction.customerName}
+                                        </Typography>
+                                        <Tooltip title="Delete Purchase">
+                                          <IconButton 
+                                            size="small"
+                                            onClick={() => handleOpenDeletePurchaseDialog(transaction)}
+                                            sx={{ 
+                                              color: 'error.main',
+                                              '&:hover': {
+                                                backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                                              }
+                                            }}
+                                          >
+                                            <Delete fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      </Stack>
+                                    }
+                                    secondary={
+                                      <>
+                                        <Typography variant="body2">
+                                          {getProductName(transaction)}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                          {formatDate(transaction.date)}
+                                        </Typography>
+                                        <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+                                          <Typography variant="body2">
+                                            ₹{transaction.amount}
+                                          </Typography>
+                                          <Typography 
+                                            variant="body2" 
+                                            color={remaining > 0 ? "error.main" : "success.main"}
+                                            fontWeight={600}
+                                          >
+                                            ₹{remaining} remaining
+                                          </Typography>
+                                        </Stack>
+                                      </>
+                                    }
+                                  />
+                                  <ListItemSecondaryAction>
+                                    <Chip
+                                      label={isPaid ? 'Paid' : 'Pending'}
+                                      size="small"
+                                      color={isPaid ? 'success' : 'warning'}
+                                    />
+                                  </ListItemSecondaryAction>
+                                </ListItem>
+                              </React.Fragment>
+                            );
+                          })}
+                      </List>
+                    ) : (
+                      // Desktop view - Table
+                      <TableContainer>
+                        <Table>
+                          <TableHead>
+                            <TableRow sx={{ bgcolor: '#fafafa' }}>
+                              <TableCell>Date</TableCell>
+                              <TableCell>Customer</TableCell>
+                              <TableCell>Product</TableCell>
+                              <TableCell>Category</TableCell>
+                              <TableCell align="right">Quantity</TableCell>
+                              <TableCell align="right">Price</TableCell>
+                              <TableCell align="right">Total</TableCell>
+                              <TableCell align="right">Remaining</TableCell>
+                              <TableCell>Status</TableCell>
+                              <TableCell>Actions</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {filteredTransactions
+                              .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                              .map((transaction) => {
+                                const remaining = transaction.remainingAmount || 0;
+                                const isPaid = remaining <= 0;
+                                
+                                return (
+                                  <TableRow 
+                                    key={transaction.id}
+                                    hover
+                                    sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
+                                  >
+                                    <TableCell>
+                                      {formatDate(transaction.date)}
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography fontWeight={500}>
+                                        {transaction.customerName}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>{getProductName(transaction)}</TableCell>
+                                    <TableCell>{transaction.category}</TableCell>
+                                    <TableCell align="right">
+                                      {transaction.quantity} {transaction.unit}
+                                    </TableCell>
+                                    <TableCell align="right">₹{transaction.price}</TableCell>
+                                    <TableCell align="right">
+                                      <Typography fontWeight={600}>
+                                        ₹{transaction.amount}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell align="right">
+                                      <Typography 
+                                        color={remaining > 0 ? "error.main" : "success.main"}
+                                        fontWeight={600}
+                                      >
+                                        ₹{remaining}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        label={isPaid ? 'Paid' : 'Pending'}
+                                        size="small"
+                                        color={isPaid ? 'success' : 'warning'}
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      <Tooltip title="Delete Purchase">
+                                        <IconButton 
+                                          size="small"
+                                          onClick={() => handleOpenDeletePurchaseDialog(transaction)}
+                                          sx={{ 
+                                            color: 'error.main',
+                                            '&:hover': {
+                                              backgroundColor: 'rgba(211, 47, 47, 0.04)'
+                                            }
+                                          }}
+                                        >
+                                          <Delete fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                    
+                    <TablePagination
+                      rowsPerPageOptions={[5, 10, 25]}
+                      component="div"
+                      count={filteredTransactions.length}
+                      rowsPerPage={rowsPerPage}
+                      page={page}
+                      onPageChange={(e, newPage) => setPage(newPage)}
+                      onRowsPerPageChange={(e) => {
+                        setRowsPerPage(parseInt(e.target.value, 10));
+                        setPage(0);
+                      }}
+                    />
+                  </>
+                )}
+              </Box>
+            )}
+
+            {/* Payment History Tab */}
+            {activeTab === 1 && (
+              <Box>
+                {payments.length === 0 ? (
+                  <Box sx={{ 
+                    textAlign: 'center', 
+                    py: 8,
+                    color: 'text.secondary'
+                  }}>
+                    <History sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                    <Typography>No payment history found</Typography>
+                  </Box>
+                ) : (
+                  <List sx={{ p: 0 }}>
+                    {payments.map((payment) => {
+                      const isRefund = payment.amount < 0;
+                      const amount = Math.abs(payment.amount);
                       
-                      <Typography variant="body2">
-                        {paymentProductName} • {p.paymentMode}
+                      return (
+                        <React.Fragment key={payment.id}>
+                          <ListItem 
+                            sx={{ 
+                              borderBottom: '1px solid #f0f0f0',
+                              py: 2
+                            }}
+                          >
+                            <ListItemText
+                              primary={
+                                <Typography fontWeight={600}>
+                                  {payment.customerName || payment.vendorName}
+                                </Typography>
+                              }
+                              secondary={
+                                <>
+                                  <Typography variant="body2">
+                                    {formatFullDate(payment.date)} • {payment.paymentMode || 'Cash'}
+                                  </Typography>
+                                  {payment.productName && (
+                                    <Typography variant="body2">
+                                      {payment.productName}
+                                    </Typography>
+                                  )}
+                                </>
+                              }
+                            />
+                            <ListItemSecondaryAction>
+                              <Stack alignItems="flex-end" spacing={0.5}>
+                                <Typography 
+                                  variant="h6" 
+                                  color={isRefund ? 'error.main' : 'success.main'}
+                                  fontWeight={600}
+                                >
+                                  {isRefund ? '-' : '+'}₹{amount}
+                                </Typography>
+                                <Chip
+                                  label={isRefund ? 'Refund' : 'Payment'}
+                                  size="small"
+                                  color={isRefund ? 'error' : 'success'}
+                                />
+                              </Stack>
+                            </ListItemSecondaryAction>
+                          </ListItem>
+                        </React.Fragment>
+                      );
+                    })}
+                  </List>
+                )}
+              </Box>
+            )}
+
+            {/* Reports Tab */}
+            {activeTab === 2 && (
+              <Box sx={{ p: 3 }}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <Paper sx={{ p: 3, borderRadius: 2 }}>
+                      <Typography variant="h6" gutterBottom fontWeight={600}>
+                        Financial Summary
                       </Typography>
-                      
-                      {p.notes && (
-                        <Typography variant="caption" color="text.secondary">
-                          {p.notes}
-                        </Typography>
-                      )}
-                      
-                      {!isRefund && (
-                        <Button
-                          size="small"
-                          color="error"
-                          variant="outlined"
-                          startIcon={<Replay />}
-                          onClick={() => {
-                            setRefundPayment(p);
-                            setRefundAmount(amount);
-                            setRefundDialog(true);
-                          }}
-                          disabled={processing || refundProcessing} // Added disabled state
-                          sx={{ mt: 1, alignSelf: 'flex-start' }}
-                        >
-                          Reverse Payment
-                        </Button>
-                      )}
-                    </Stack>
-                  </Paper>
-                );
-              })}
+                      <Stack spacing={2}>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Total Sales:</Typography>
+                          <Typography fontWeight={600}>₹{stats.totalSales.toLocaleString()}</Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Total Received:</Typography>
+                          <Typography fontWeight={600} color="success.main">₹{stats.totalPaid.toLocaleString()}</Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Pending Balance:</Typography>
+                          <Typography fontWeight={600} color="error.main">₹{stats.totalPending.toLocaleString()}</Typography>
+                        </Stack>
+                      </Stack>
+                    </Paper>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Paper sx={{ p: 3, borderRadius: 2 }}>
+                      <Typography variant="h6" gutterBottom fontWeight={600}>
+                        Purchase Summary
+                      </Typography>
+                      <Stack spacing={2}>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Total Purchases:</Typography>
+                          <Typography fontWeight={600}>{stats.transactionCount}</Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Pending Purchases:</Typography>
+                          <Typography fontWeight={600} color="warning.main">{stats.pendingCount}</Typography>
+                        </Stack>
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography>Paid Purchases:</Typography>
+                          <Typography fontWeight={600} color="success.main">{stats.transactionCount - stats.pendingCount}</Typography>
+                        </Stack>
+                      </Stack>
+                    </Paper>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
+          </Paper>
+        </Container>
+
+        {/* Individual Settle Dialog */}
+        <Dialog 
+          open={selectPurchaseDialog} 
+          onClose={() => !processingPayment && setSelectPurchaseDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600}>
+              Individual Settle
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Vendor: {vendor?.vendorName} • Balance: ₹{vendor?.balance}
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField
+                fullWidth
+                label="Payment Amount"
+                type="number"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                InputProps={{
+                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                }}
+                helperText={`Maximum: ₹${vendor?.balance || 0}`}
+              />
+
+              <TextField
+                select
+                fullWidth
+                label="Payment Mode"
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+              >
+                {paymentModes.map(mode => (
+                  <MenuItem key={mode} value={mode}>{mode}</MenuItem>
+                ))}
+              </TextField>
+
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 2 }}>
+                Select Purchase to Settle:
+              </Typography>
+
+              {pendingTransactions.length === 0 ? (
+                <Alert severity="info">
+                  No pending purchases found
+                </Alert>
+              ) : (
+                <List sx={{ maxHeight: 300, overflow: 'auto' }}>
+                  {pendingTransactions.map((txn) => {
+                    const isSelected = selectedPurchase?.id === txn.id;
+                    const canPay = Number(paymentAmount) <= txn.remainingAmount;
+                    
+                    return (
+                      <ListItem
+                        key={txn.id}
+                        button
+                        selected={isSelected}
+                        onClick={() => setSelectedPurchase(txn)}
+                        sx={{
+                          borderRadius: 1,
+                          mb: 1,
+                          border: isSelected ? '2px solid #1976d2' : '1px solid #e0e0e0',
+                          bgcolor: isSelected ? '#e3f2fd' : 'white',
+                        }}
+                      >
+                        <ListItemText
+                          primary={
+                            <Typography fontWeight={600}>
+                              {getProductName(txn)}
+                            </Typography>
+                          }
+                          secondary={
+                            <>
+                              <Typography variant="caption" display="block">
+                                Customer: {txn.customerName} • {formatDate(txn.date)}
+                              </Typography>
+                              <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                                <Typography variant="caption">
+                                  Total: ₹{txn.amount}
+                                </Typography>
+                                <Typography variant="caption" color="error.main" fontWeight={600}>
+                                  Remaining: ₹{txn.remainingAmount}
+                                </Typography>
+                              </Stack>
+                            </>
+                          }
+                        />
+                        <ListItemSecondaryAction>
+                          <Chip
+                            label={`₹${txn.remainingAmount}`}
+                            size="small"
+                            color={canPay ? (isSelected ? 'primary' : 'default') : 'error'}
+                            variant={isSelected ? 'filled' : 'outlined'}
+                          />
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                    );
+                  })}
+                </List>
+              )}
             </Stack>
-          )}
-        </CardContent>
-      </Card>
+          </DialogContent>
 
-      {/* Pay Dialog */}
-      <Dialog 
-        open={openPay} 
-        onClose={() => !processing && !refundProcessing && setOpenPay(false)} 
-        maxWidth="xs" 
-        fullWidth
-      >
-        <DialogContent>
-          <Typography variant="h6" fontWeight={700} gutterBottom>
-            Settle Payment
-          </Typography>
-          
-          {selectedTxn && (
-            <Paper sx={{ p: 2, mb: 3, bgcolor: '#fff8e1' }}>
-              <Typography variant="subtitle2" fontWeight={600}>
-                {getProductName(selectedTxn)}
-              </Typography>
-              <Stack direction="row" justifyContent="space-between" sx={{ mt: 1 }}>
-                <Typography variant="caption">Remaining:</Typography>
-                <Typography variant="body2" fontWeight={600} color="error.main">
-                  ₹{selectedTxn.remainingAmount}
-                </Typography>
-              </Stack>
-              <Stack direction="row" justifyContent="space-between">
-                <Typography variant="caption">Customer Balance:</Typography>
-                <Typography variant="body2" fontWeight={600}>
-                  ₹{customerBalance}
-                </Typography>
-              </Stack>
-            </Paper>
-          )}
-          
-          <TextField
-            fullWidth
-            label="Amount"
-            type="number"
-            value={payData.amount}
-            onChange={e => setPayData({ ...payData, amount: e.target.value })}
-            InputProps={{
-              startAdornment: <Typography sx={{ mr: 1 }}>₹</Typography>,
-            }}
-            sx={{ mb: 2 }}
-            disabled={processing || refundProcessing}
-          />
-          
-          <TextField
-            select
-            fullWidth
-            label="Payment Mode"
-            value={payData.mode}
-            onChange={e => setPayData({ ...payData, mode: e.target.value })}
-            sx={{ mb: 3 }}
-            disabled={processing || refundProcessing}
-          >
-            {['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'].map(m => (
-              <MenuItem key={m} value={m}>{m}</MenuItem>
-            ))}
-          </TextField>
-          
-          <Button
-            fullWidth
-            variant="contained"
-            color="error"
-            size="large"
-            startIcon={processing ? <CircularProgress size={20} color="inherit" /> : <PaymentIcon />}
-            onClick={handlePay}
-            disabled={processing || refundProcessing || !payData.amount || Number(payData.amount) <= 0}
-          >
-            {processing ? 'Processing...' : 'Confirm Payment'}
-          </Button>
-        </DialogContent>
-      </Dialog>
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => setSelectPurchaseDialog(false)}
+              disabled={processingPayment}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleIndividualPayment}
+              disabled={!selectedPurchase || processingPayment || !paymentAmount || Number(paymentAmount) <= 0}
+              startIcon={processingPayment ? <CircularProgress size={20} /> : <CheckCircle />}
+            >
+              {processingPayment ? 'Processing...' : `Pay ₹${paymentAmount}`}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
-      {/* Refund Dialog */}
-      <Dialog 
-        open={refundDialog} 
-        onClose={() => !refundProcessing && setRefundDialog(false)} 
-        maxWidth="xs" 
-        fullWidth
-      >
-        <DialogContent>
-          <Typography variant="h6" fontWeight={700} color="error" gutterBottom>
-            Reverse Payment
-          </Typography>
-          
-          {refundPayment && (
-            <Paper sx={{ p: 2, mb: 3, bgcolor: '#ffebee' }}>
-              <Typography variant="subtitle2" fontWeight={600}>
-                {refundPayment.productName || getProductName(refundPayment)}
-              </Typography>
-              <Stack direction="row" justifyContent="space-between" sx={{ mt: 1 }}>
-                <Typography variant="caption">Original Amount:</Typography>
-                <Typography variant="body2" fontWeight={600}>
-                  ₹{Math.abs(refundPayment.amount)}
+        {/* Edit Vendor Dialog */}
+        <Dialog open={openEditDialog} onClose={() => setOpenEditDialog(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600}>
+              Edit Vendor Details
+            </Typography>
+          </DialogTitle>
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField
+                fullWidth
+                label="Vendor Name *"
+                value={editForm.vendorName}
+                onChange={(e) => setEditForm({ ...editForm, vendorName: e.target.value })}
+                required
+              />
+              <TextField
+                fullWidth
+                label="Phone Number"
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                type="tel"
+              />
+              <TextField
+                fullWidth
+                label="Email"
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                type="email"
+              />
+              <TextField
+                fullWidth
+                label="Address"
+                value={editForm.address}
+                onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                multiline
+                rows={2}
+              />
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 3 }}>
+            <Button onClick={() => setOpenEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleUpdateVendor}
+              startIcon={<CheckCircle />}
+            >
+              Update Vendor
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Vendor Dialog */}
+        <Dialog 
+          open={openDeleteDialog} 
+          onClose={() => !deletingVendor && setOpenDeleteDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600} color="error">
+              <Warning sx={{ verticalAlign: 'middle', mr: 1 }} />
+              Delete Vendor
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {vendor?.vendorName}
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={3}>
+              <Alert severity="error" icon={false}>
+                <Typography fontWeight={600} gutterBottom>
+                  ⚠️ DANGER ZONE ⚠️
                 </Typography>
-              </Stack>
-            </Paper>
-          )}
-          
-          <TextField
-            fullWidth
-            label="Refund Amount"
-            type="number"
-            value={refundAmount}
-            onChange={e => setRefundAmount(e.target.value)}
-            InputProps={{
-              startAdornment: <Typography sx={{ mr: 1 }}>₹</Typography>,
-            }}
-            sx={{ mb: 3 }}
-            disabled={refundProcessing || processing}
-          />
-          
-          <Button
-            fullWidth
-            variant="contained"
-            color="error"
-            size="large"
-            onClick={handleRefund}
-            disabled={refundProcessing || processing || !refundAmount || Number(refundAmount) <= 0}
-            startIcon={refundProcessing ? <CircularProgress size={20} color="inherit" /> : null}
-          >
-            {refundProcessing ? 'Processing Refund...' : 'Confirm Refund'}
-          </Button>
-        </DialogContent>
-      </Dialog>
-    </Container>
+                <Typography variant="body2">
+                  This action will permanently delete:
+                </Typography>
+                <List dense sx={{ pl: 2 }}>
+                  <ListItem sx={{ py: 0 }}>
+                    • Vendor: {vendor?.vendorName}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Total purchases: {stats.transactionCount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Payments: {payments.length}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Balance: ₹{vendor?.balance}
+                  </ListItem>
+                </List>
+                <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
+                  Customer balances will be recalculated after deletion.
+                </Typography>
+              </Alert>
+
+              <Alert severity="warning">
+                This action cannot be undone. Please proceed with caution.
+              </Alert>
+
+              <TextField
+                fullWidth
+                label={`Type "DELETE" to confirm`}
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                placeholder="DELETE"
+                disabled={deletingVendor}
+                sx={{ mt: 2 }}
+                helperText="Type the word DELETE in uppercase to confirm"
+              />
+
+              <Box sx={{ bgcolor: '#fff3e0', p: 2, borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight={600} gutterBottom>
+                  Confirmation Checklist:
+                </Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2">
+                    ✓ I understand all vendor data will be permanently deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand all purchases for this vendor will be deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand customer balances will be recalculated
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I have backed up any necessary data
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => {
+                setOpenDeleteDialog(false);
+                setDeleteConfirmation('');
+              }}
+              disabled={deletingVendor}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              onClick={handleDeleteVendor}
+              disabled={deleteConfirmation !== 'DELETE' || deletingVendor}
+              startIcon={deletingVendor ? <CircularProgress size={20} /> : <Delete />}
+            >
+              {deletingVendor ? 'Deleting...' : 'Delete Permanently'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Purchase Dialog */}
+        <Dialog 
+          open={openDeletePurchaseDialog} 
+          onClose={() => !deletingPurchase && setOpenDeletePurchaseDialog(false)} 
+          maxWidth="sm" 
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" fontWeight={600} color="error">
+              <Warning sx={{ verticalAlign: 'middle', mr: 1 }} />
+              Delete Purchase
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {purchaseToDelete?.customerName} • {purchaseToDelete && formatDate(purchaseToDelete.date)}
+            </Typography>
+          </DialogTitle>
+
+          <DialogContent>
+            <Stack spacing={3}>
+              <Alert severity="error" icon={false}>
+                <Typography fontWeight={600} gutterBottom>
+                  ⚠️ Delete Purchase Entry
+                </Typography>
+                <Typography variant="body2">
+                  This action will delete the following purchase:
+                </Typography>
+                <List dense sx={{ pl: 2 }}>
+                  <ListItem sx={{ py: 0 }}>
+                    • Product: {purchaseToDelete && getProductName(purchaseToDelete)}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Customer: {purchaseToDelete?.customerName}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Amount: ₹{purchaseToDelete?.amount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Remaining: ₹{purchaseToDelete?.remainingAmount}
+                  </ListItem>
+                  <ListItem sx={{ py: 0 }}>
+                    • Date: {purchaseToDelete && formatFullDate(purchaseToDelete.date)}
+                  </ListItem>
+                </List>
+              </Alert>
+
+              <Alert severity="warning">
+                This will also:
+                <Typography variant="body2">
+                  • Delete all related payment records
+                </Typography>
+                <Typography variant="body2">
+                  • Update vendor balance (₹{vendor?.balance} → ₹{Math.max(0, vendor?.balance - (purchaseToDelete?.remainingAmount || 0))})
+                </Typography>
+                {purchaseToDelete?.customerId && (
+                  <Typography variant="body2">
+                    • Update customer balance
+                  </Typography>
+                )}
+              </Alert>
+
+              <TextField
+                fullWidth
+                label={`Type "DELETE" to confirm`}
+                value={deletePurchaseConfirmation}
+                onChange={(e) => setDeletePurchaseConfirmation(e.target.value)}
+                placeholder="DELETE"
+                disabled={deletingPurchase}
+                sx={{ mt: 2 }}
+                helperText="Type the word DELETE in uppercase to confirm deletion"
+              />
+
+              <Box sx={{ bgcolor: '#fff3e0', p: 2, borderRadius: 1 }}>
+                <Typography variant="body2" fontWeight={600} gutterBottom>
+                  Confirmation Checklist:
+                </Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2">
+                    ✓ This purchase was entered incorrectly
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand this purchase and all related payments will be deleted
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ I understand vendor and customer balances will be updated
+                  </Typography>
+                  <Typography variant="body2">
+                    ✓ This action cannot be undone
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button
+              onClick={() => {
+                setOpenDeletePurchaseDialog(false);
+                setPurchaseToDelete(null);
+                setDeletePurchaseConfirmation('');
+              }}
+              disabled={deletingPurchase}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              onClick={handleDeletePurchase}
+              disabled={deletePurchaseConfirmation !== 'DELETE' || deletingPurchase}
+              startIcon={deletingPurchase ? <CircularProgress size={20} /> : <Delete />}
+            >
+              {deletingPurchase ? 'Deleting...' : 'Delete Purchase'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Box>
+    </LocalizationProvider>
   );
 };
 
-export default CustomerDetail;
+export default VendorDetail;
 
-correct it accordingly without any logic error there should immediate updation in everything 
+
+// old before 17.01.26

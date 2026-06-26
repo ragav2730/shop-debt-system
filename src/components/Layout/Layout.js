@@ -29,7 +29,12 @@ import {
   LinearProgress,
   Button,
   Skeleton,
-  Alert
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  CircularProgress
 } from '@mui/material';
 import { 
   PersonAdd, 
@@ -51,11 +56,13 @@ import {
   ShoppingCart,
   Receipt,
   Person,
-  Business  // ADDED for Vendors icon
+  Business,
+  PhotoCamera
 } from '@mui/icons-material';
 import { signOut } from 'firebase/auth';
-import { auth, db } from '../../services/firebase';
-import { collection, query, onSnapshot, where, orderBy } from 'firebase/firestore';
+import { auth, db, storage } from '../../services/firebase';
+import { collection, query, onSnapshot, where, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const drawerWidth = 240;
 
@@ -68,6 +75,9 @@ const Layout = () => {
   const [time, setTime] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [profileImageUrl, setProfileImageUrl] = useState('');
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [stats, setStats] = useState({
     totalCustomers: 0,
     pendingCustomers: 0,
@@ -79,6 +89,14 @@ const Layout = () => {
   const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Load profile image from localStorage on mount
+  useEffect(() => {
+    const savedImage = localStorage.getItem('profileImage');
+    if (savedImage) {
+      setProfileImageUrl(savedImage);
+    }
+  }, []);
 
   // Update time every minute
   useEffect(() => {
@@ -230,7 +248,7 @@ const Layout = () => {
         time: 'Today',
         type: 'sale',
         icon: '🛒',
-        action: () => navigate('/purchases')
+        action: () => navigate('/entry')
       });
     }
 
@@ -281,17 +299,15 @@ const Layout = () => {
     return formatter.format(amount);
   };
 
-  // UPDATED MENU ITEMS - Added Vendors after Product Manager
+  // UPDATED MENU ITEMS - Removed Purchase History and Generate PDF
   const menuItems = [
     { text: 'Dashboard', icon: <Dashboard />, path: '/' },
     { text: 'Sales', icon: <PersonAdd />, path: '/entry' },
     { text: 'Customer List', icon: <ListAlt />, path: '/list' },
     { text: 'Payments', icon: <Payment />, path: '/paid' },
     { text: 'Product Manager', icon: <Inventory2 />, path: '/products' },
-    { text: 'Vendors', icon: <Business />, path: '/vendors' }, // ADDED: Vendors button
-    { text: 'Purchase History', icon: <ShoppingCart />, path: '/purchases' },
+    { text: 'Vendors', icon: <Business />, path: '/vendors' },
     { text: 'Product Prices', icon: <AttachMoney />, path: '/price' },
-    { text: 'Generate PDF', icon: <PictureAsPdf />, path: '/generate-pdf' },
     { text: 'Users', icon: <People />, path: '/users' },
     { text: 'Profile', icon: <Person />, path: '/profile' },
     { text: 'Settings', icon: <Settings />, path: '/settings' },
@@ -349,6 +365,37 @@ const Layout = () => {
     }
   };
 
+  // Profile picture upload handler
+  const handleProfileImageUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      // Upload to Firebase Storage
+      const storageRef = ref(storage, `profilePictures/${auth.currentUser?.uid || 'default'}`);
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+
+      // Save URL to localStorage and state
+      localStorage.setItem('profileImage', downloadUrl);
+      setProfileImageUrl(downloadUrl);
+
+      // Optionally save to Firestore user document
+      if (auth.currentUser) {
+        const userRef = doc(db, 'users', auth.currentUser.uid);
+        await updateDoc(userRef, { profileImage: downloadUrl });
+      }
+
+      setUploadDialogOpen(false);
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Failed to upload image. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-IN', { 
       hour: '2-digit', 
@@ -366,36 +413,30 @@ const Layout = () => {
     });
   };
 
-  // UPDATED: Added Vendors route
+  // UPDATED: Removed Purchase History and Generate PDF routes
   const getPageTitle = () => {
     const currentItem = menuItems.find(item => item.path === location.pathname);
     if (currentItem) return currentItem.text;
     if (location.pathname === '/products') return 'Product Manager';
 
     if (location.pathname.includes('/list/')) return 'Customer Details';
-    if (location.pathname.includes('/generate-pdf')) return 'PDF Generator';
     if (location.pathname.includes('/customers/')) return 'Customer Details';
-    if (location.pathname.includes('/purchases/')) return 'Purchase Details';
     if (location.pathname.includes('/vendors/')) return 'Vendor Details';
     if (location.pathname === '/profile') return 'My Profile';
     if (location.pathname === '/settings') return 'Settings';
     if (location.pathname === '/vendors') return 'Vendors';
-    
     if (location.pathname === '/') return 'Dashboard';
     
     return 'Dashboard';
   };
 
-  // UPDATED: Added Vendors icon
   const getPageIcon = () => {
     const currentItem = menuItems.find(item => item.path === location.pathname);
     if (currentItem) return currentItem.icon;
     if (location.pathname === '/products') return <Inventory2 />;
 
     if (location.pathname.includes('/customers/')) return <People />;
-    if (location.pathname.includes('/purchases/')) return <ShoppingCart />;
     if (location.pathname.includes('/list/')) return <People />;
-    if (location.pathname.includes('/generate-pdf')) return <PictureAsPdf />;
     if (location.pathname.includes('/vendors/')) return <Business />;
     if (location.pathname === '/profile') return <Person />;
     if (location.pathname === '/settings') return <Settings />;
@@ -412,7 +453,7 @@ const Layout = () => {
 
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Logo Section */}
+      {/* Logo Section - UPDATED BRANDING */}
       <Box 
         sx={{ 
           p: 3,
@@ -439,7 +480,7 @@ const Layout = () => {
             fontWeight: 'bold'
           }}
         >
-          SD
+          AC
         </Avatar>
         <Typography 
           variant="subtitle1" 
@@ -450,7 +491,7 @@ const Layout = () => {
             fontSize: { xs: '0.9rem', md: '1rem' }
           }}
         >
-          Shop Debt CRM
+          AVR Credit Manager
         </Typography>
         <Typography 
           variant="caption" 
@@ -460,7 +501,7 @@ const Layout = () => {
             mt: 0.5
           }}
         >
-          Professional Debt Management
+          Credit Management System
         </Typography>
       </Box>
 
@@ -470,11 +511,9 @@ const Layout = () => {
           {menuItems.map((item) => {
             const isActive = location.pathname === item.path || 
                            (item.path === '/customers' && location.pathname.includes('/customers/')) ||
-                           (item.path === '/purchases' && location.pathname.includes('/purchases/')) ||
                            (item.path === '/vendors' && location.pathname.includes('/vendors/'));
             
-            // Add premium badge for new pages
-            const isPremiumPage = item.path === '/vendors' || item.path === '/customers' || item.path === '/purchases';
+            // Remove purchase history and generate pdf from menu
             
             return (
               <ListItem 
@@ -502,31 +541,15 @@ const Layout = () => {
                 </ListItemIcon>
                 <ListItemText 
                   primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Typography 
-                        sx={{
-                          fontSize: { xs: '0.875rem', md: '0.95rem' },
-                          fontWeight: isActive ? 'bold' : 'medium',
-                          color: isActive ? '#d32f2f' : 'text.primary'
-                        }}
-                      >
-                        {item.text}
-                      </Typography>
-                      {isPremiumPage && !isActive && item.path === '/vendors' && (
-                        <Chip
-                          label="New"
-                          size="small"
-                          sx={{
-                            height: 16,
-                            fontSize: '0.6rem',
-                            bgcolor: 'rgba(33, 150, 243, 0.1)',
-                            color: '#2196F3',
-                            fontWeight: 'bold',
-                            ml: 1
-                          }}
-                        />
-                      )}
-                    </Box>
+                    <Typography 
+                      sx={{
+                        fontSize: { xs: '0.875rem', md: '0.95rem' },
+                        fontWeight: isActive ? 'bold' : 'medium',
+                        color: isActive ? '#d32f2f' : 'text.primary'
+                      }}
+                    >
+                      {item.text}
+                    </Typography>
                   }
                 />
                 {isActive && (
@@ -544,7 +567,7 @@ const Layout = () => {
         </List>
       </Box>
 
-      {/* Bottom Section - Real Stats */}
+      {/* Bottom Section - Real Stats (unchanged) */}
       <Box sx={{ p: 2, bgcolor: 'rgba(211, 47, 47, 0.03)', borderTop: '1px solid rgba(211, 47, 47, 0.1)' }}>
         <Stack spacing={1}>
           {stats.loading ? (
@@ -787,28 +810,6 @@ const Layout = () => {
                 </IconButton>
               </Tooltip>
 
-              {/* Quick PDF Button */}
-              {stats.pendingCustomers > 0 && !isMobile && (
-                <Tooltip title="Generate Bills for Pending Customers" arrow>
-                  <Button
-                    startIcon={<PictureAsPdf />}
-                    variant="contained"
-                    size="small"
-                    sx={{
-                      bgcolor: '#d32f2f',
-                      '&:hover': {
-                        bgcolor: '#b71c1c'
-                      },
-                      textTransform: 'none',
-                      fontWeight: 'bold'
-                    }}
-                    onClick={() => navigate('/generate-pdf')}
-                  >
-                    Generate Bills
-                  </Button>
-                </Tooltip>
-              )}
-
               {/* Quick Vendors Button */}
               {!isMobile && (
                 <Tooltip title="Manage Vendors" arrow>
@@ -833,16 +834,21 @@ const Layout = () => {
                 </Tooltip>
               )}
 
-              {/* User Profile */}
-              <Tooltip title="Account Settings" arrow>
+              {/* User Profile with Click to Upload */}
+              <Tooltip title="Change Profile Picture" arrow>
                 <IconButton 
-                  onClick={handleMenuOpen}
+                  onClick={() => setUploadDialogOpen(true)}
                   sx={{ 
                     p: 0,
-                    ml: 1
+                    ml: 1,
+                    position: 'relative',
+                    '&:hover .hover-overlay': {
+                      opacity: 1
+                    }
                   }}
                 >
                   <Avatar 
+                    src={profileImageUrl || ''}
                     sx={{ 
                       width: 36, 
                       height: 36,
@@ -850,8 +856,28 @@ const Layout = () => {
                       fontSize: '0.9rem'
                     }}
                   >
-                    {auth.currentUser?.email?.[0]?.toUpperCase() || 'A'}
+                    {!profileImageUrl && (auth.currentUser?.email?.[0]?.toUpperCase() || 'A')}
                   </Avatar>
+                  <Box 
+                    className="hover-overlay"
+                    sx={{
+                      position: 'absolute',
+                      bottom: -2,
+                      right: -2,
+                      bgcolor: 'rgba(211, 47, 47, 0.9)',
+                      borderRadius: '50%',
+                      width: 18,
+                      height: 18,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: 0,
+                      transition: 'opacity 0.2s ease',
+                      pointerEvents: 'none'
+                    }}
+                  >
+                    <PhotoCamera sx={{ fontSize: 12, color: 'white' }} />
+                  </Box>
                 </IconButton>
               </Tooltip>
             </Stack>
@@ -1073,6 +1099,39 @@ const Layout = () => {
           </Container>
         </Box>
       </Box>
+
+      {/* Profile Picture Upload Dialog */}
+      <Dialog open={uploadDialogOpen} onClose={() => setUploadDialogOpen(false)}>
+        <DialogTitle>Change Profile Picture</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 2 }}>
+            <Avatar
+              src={profileImageUrl || ''}
+              sx={{ width: 120, height: 120, mb: 2 }}
+            >
+              {!profileImageUrl && (auth.currentUser?.email?.[0]?.toUpperCase() || 'A')}
+            </Avatar>
+            <Button
+              variant="contained"
+              component="label"
+              startIcon={<PhotoCamera />}
+              disabled={uploading}
+            >
+              Upload New Image
+              <input
+                type="file"
+                hidden
+                accept="image/*"
+                onChange={handleProfileImageUpload}
+              />
+            </Button>
+            {uploading && <CircularProgress size={24} sx={{ mt: 2 }} />}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUploadDialogOpen(false)}>Cancel</Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 };

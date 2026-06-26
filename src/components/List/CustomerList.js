@@ -6,6 +6,7 @@ import {
   Chip,
   TextField,
   MenuItem,
+  Menu,
   Box,
   IconButton,
   Button,
@@ -25,7 +26,10 @@ import {
   FilterList,
   Phone,
   ArrowForward,
-  Pending
+  Pending,
+  Download,
+  PictureAsPdf,
+  TableChart
 } from '@mui/icons-material';
 
 import { Link as RouterLink } from 'react-router-dom';
@@ -37,6 +41,8 @@ import {
   where
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const categories = ['All', 'Cement', 'Bricks', 'Steel', 'Sheet', 'Other'];
 
@@ -49,6 +55,7 @@ const CustomerList = () => {
   const [filteredVendors, setFilteredVendors] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [downloadAnchorEl, setDownloadAnchorEl] = useState(null);
 
   /* ================= LOAD VENDORS (AS CUSTOMERS) ================= */
   useEffect(() => {
@@ -116,6 +123,112 @@ const CustomerList = () => {
     window.location.href = `tel:${phone}`;
   };
 
+  // Total of all purchases linked to this vendor (matches "Total Sales" on Vendor Detail page)
+  const getVendorTotalAmount = vendorId =>
+    transactions
+      .filter(t => (t.vendorId || t.customerId) === vendorId)
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+  /* ================= DOWNLOAD: CSV ================= */
+  const handleDownloadCSV = () => {
+    const escapeCSV = value => {
+      const str = String(value ?? '');
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+
+    const headers = ['Name', 'Phone No', 'Total Amount', 'Balance'];
+    const rows = filteredVendors.map(v => [
+      v.vendorName || '',
+      v.phone || '',
+      getVendorTotalAmount(v.id),
+      v.balance || 0
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(escapeCSV).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Customers_List_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  /* ================= DOWNLOAD: PDF ================= */
+  const handleDownloadPDF = () => {
+    const docPdf = new jsPDF();
+
+    // Header
+    docPdf.setFontSize(16);
+    docPdf.setTextColor(198, 40, 40); // #C62828
+    docPdf.text('Pending Customers Report', 14, 16);
+
+    docPdf.setFontSize(10);
+    docPdf.setTextColor(100, 100, 100);
+    docPdf.text(
+      `Generated on ${new Date().toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      })}`,
+      14,
+      22
+    );
+
+    // Table rows — using "Rs." instead of the rupee symbol (jsPDF's default font
+    // doesn't include the ₹ glyph and renders it as a broken/garbled character)
+    const tableRows = filteredVendors.map(v => [
+      v.vendorName || '',
+      v.phone || '-',
+      `Rs. ${getVendorTotalAmount(v.id).toLocaleString('en-IN')}`,
+      `Rs. ${(v.balance || 0).toLocaleString('en-IN')}`
+    ]);
+
+    autoTable(docPdf, {
+      startY: 28,
+      head: [['Name', 'Phone No', 'Total Amount', 'Balance']],
+      body: tableRows,
+      headStyles: {
+        fillColor: [198, 40, 40],
+        textColor: 255,
+        fontStyle: 'bold'
+      },
+      alternateRowStyles: { fillColor: [255, 247, 247] },
+      styles: { fontSize: 10, cellPadding: 4 },
+      columnStyles: {
+        2: { halign: 'right' },
+        3: { halign: 'right' }
+      }
+    });
+
+    const totalBalance = filteredVendors.reduce((sum, v) => sum + (v.balance || 0), 0);
+    const finalY = docPdf.lastAutoTable ? docPdf.lastAutoTable.finalY : 28;
+
+    docPdf.setFontSize(11);
+    docPdf.setTextColor(198, 40, 40);
+    docPdf.text(
+      `Total Outstanding Balance: Rs. ${totalBalance.toLocaleString('en-IN')}`,
+      14,
+      finalY + 10
+    );
+
+    docPdf.save(`Customers_List_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  /* ================= DOWNLOAD MENU ================= */
+  const handleDownloadClick = event => {
+    setDownloadAnchorEl(event.currentTarget);
+  };
+
+  const handleDownloadClose = () => {
+    setDownloadAnchorEl(null);
+  };
+
   /* ================= VENDOR CARD ================= */
   const VendorCard = ({ vendor }) => (
     <Card sx={{ mb: 2, borderRadius: 4, bgcolor: '#FFF7F7', boxShadow: 'none' }}>
@@ -170,19 +283,55 @@ const CustomerList = () => {
   return (
     <Container maxWidth="lg">
       <Paper sx={{ p: 3, borderRadius: 4 }}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3} spacing={2}>
           <Typography variant="h5" fontWeight={800} color="#C62828">
             Pending Customers
           </Typography>
 
-          <Button
-            component={RouterLink}
-            to="/vendors" // Changed to go to vendor list to add new customer
-            startIcon={<PersonAdd />}
-            variant="contained"
-          >
-            Add Customer
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              onClick={handleDownloadClick}
+              startIcon={<Download />}
+              variant="outlined"
+              disabled={filteredVendors.length === 0}
+              sx={{ color: '#C62828', borderColor: '#C62828' }}
+            >
+              {!isMobile && 'Download'}
+            </Button>
+            <Menu
+              anchorEl={downloadAnchorEl}
+              open={Boolean(downloadAnchorEl)}
+              onClose={handleDownloadClose}
+            >
+              <MenuItem
+                onClick={() => {
+                  handleDownloadCSV();
+                  handleDownloadClose();
+                }}
+              >
+                <TableChart fontSize="small" sx={{ mr: 1 }} />
+                Download CSV
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  handleDownloadPDF();
+                  handleDownloadClose();
+                }}
+              >
+                <PictureAsPdf fontSize="small" sx={{ mr: 1 }} />
+                Download PDF
+              </MenuItem>
+            </Menu>
+
+            <Button
+              component={RouterLink}
+              to="/vendors" // Changed to go to vendor list to add new customer
+              startIcon={<PersonAdd />}
+              variant="contained"
+            >
+              {isMobile ? 'Add' : 'Add Customer'}
+            </Button>
+          </Stack>
         </Stack>
 
         {/* SEARCH */}
