@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   TextField,
@@ -97,7 +97,10 @@ const Payment = () => {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('Cash');
   const [processingPayment, setProcessingPayment] = useState(false);
-  // FIX: default settleType set properly in loadVendorTransactions, not hardcoded here
+
+  // Only two settle types now — Initial Balance is no longer a separate
+  // mode; it is merged into both 'individual' (as a selectable card) and
+  // 'normal' (as a participant in the equal distribution).
   const [settleType, setSettleType] = useState('individual');
 
   const [allPayments, setAllPayments] = useState([]);
@@ -152,7 +155,6 @@ const Payment = () => {
 
     setLoadingTransactions(true);
     try {
-      // FIX: Read initialBalance from vendorData reliably
       const initialBal = Number(vendorData?.initialBalance) || 0;
       setVendorInitialBalance(initialBal);
 
@@ -178,17 +180,6 @@ const Payment = () => {
       pendingTransactions.sort((a, b) => a.date - b.date);
 
       setVendorTransactions(pendingTransactions);
-
-      // FIX: Auto-select the correct settle type based on what's actually available
-      // If no pending bills but vendor has initial balance → must use 'initial'
-      if (pendingTransactions.length === 0 && initialBal > 0) {
-        setSettleType('initial');
-      } else if (pendingTransactions.length > 0) {
-        // Has bills → default to individual
-        setSettleType('individual');
-      }
-      // Edge case: no bills AND no initial → both are unavailable, keep current state
-
       setDistributionPreview([]);
     } catch (error) {
       console.error('Error loading vendor transactions:', error);
@@ -202,19 +193,41 @@ const Payment = () => {
     }
   };
 
+  /* ================= UNIFIED PAYABLE ITEMS =================
+     This is the key change: the Initial Balance is no longer a separate
+     settle type. It's modeled as just another payable "card" alongside
+     real purchase transactions, so it:
+       - shows up in the Individual settle picker like any other bill
+       - participates in the Normal settle equal-distribution math
+  */
+  const payableItems = useMemo(() => {
+    const items = [...vendorTransactions];
+    if (vendorInitialBalance > 0) {
+      items.push({
+        id: '__initial_balance__',
+        isInitialBalance: true,
+        remainingAmount: vendorInitialBalance,
+        amount: vendorInitialBalance,
+        productName: 'Initial Balance (Opening Due)',
+        date: selectedVendor?.createdAt?.toDate?.() || selectedVendor?.createdAt || null
+      });
+    }
+    return items;
+  }, [vendorTransactions, vendorInitialBalance, selectedVendor]);
+
   /* ================= CALCULATE NORMAL DISTRIBUTION ================= */
-  const calculateNormalDistribution = (amount, transactions) => {
-    if (!transactions.length || !amount || Number(amount) <= 0) return [];
+  const calculateNormalDistribution = (amount, items) => {
+    if (!items.length || !amount || Number(amount) <= 0) return [];
 
     const paymentAmt = Number(amount);
-    const pendingTransactions = transactions.filter(t => t.remainingAmount > 0);
+    const pendingItems = items.filter(t => t.remainingAmount > 0);
 
-    if (pendingTransactions.length === 0) return [];
+    if (pendingItems.length === 0) return [];
 
-    const totalPending = pendingTransactions.reduce((sum, t) => sum + t.remainingAmount, 0);
+    const totalPending = pendingItems.reduce((sum, t) => sum + t.remainingAmount, 0);
 
     if (paymentAmt >= totalPending) {
-      return pendingTransactions.map(t => ({
+      return pendingItems.map(t => ({
         ...t,
         allocatedAmount: t.remainingAmount,
         newRemaining: 0,
@@ -222,10 +235,10 @@ const Payment = () => {
       }));
     }
 
-    const equalShare = paymentAmt / pendingTransactions.length;
+    const equalShare = paymentAmt / pendingItems.length;
     let remainingToAllocate = paymentAmt;
 
-    const distribution = pendingTransactions.map(t => {
+    const distribution = pendingItems.map(t => {
       const allocated = Math.min(equalShare, t.remainingAmount);
       remainingToAllocate -= allocated;
       return {
@@ -259,14 +272,17 @@ const Payment = () => {
       selectedVendor &&
       paymentAmount &&
       Number(paymentAmount) > 0 &&
-      vendorTransactions.length > 0
+      payableItems.length > 0
     ) {
-      const preview = calculateNormalDistribution(paymentAmount, vendorTransactions);
+      // FIX: distribution now runs over payableItems (real bills + Initial
+      // Balance card), not just vendorTransactions, so Normal settle also
+      // reduces the Initial Balance proportionally.
+      const preview = calculateNormalDistribution(paymentAmount, payableItems);
       setDistributionPreview(preview);
     } else {
       setDistributionPreview([]);
     }
-  }, [paymentAmount, settleType, vendorTransactions, selectedVendor]);
+  }, [paymentAmount, settleType, payableItems, selectedVendor]);
 
   /* ================= HANDLE VENDOR SELECTION ================= */
   const handleVendorSelect = (vendor) => {
@@ -274,17 +290,14 @@ const Payment = () => {
     setPaymentAmount('');
     setSelectedPurchase(null);
     setDistributionPreview([]);
+    setSettleType('individual');
 
     if (vendor) {
-      // FIX: Do NOT force settleType here — loadVendorTransactions will set
-      // the correct default based on what's actually available for this vendor.
       setVendorInitialBalance(Number(vendor.initialBalance) || 0);
       loadVendorTransactions(vendor.id, vendor);
     } else {
-      // Vendor cleared — reset everything
       setVendorTransactions([]);
       setVendorInitialBalance(0);
-      setSettleType('individual');
     }
   };
 
@@ -295,7 +308,7 @@ const Payment = () => {
 
     if (filter === 'thisMonth') {
       filtered = allPayments.filter(p => {
-        const d = p.date?.toDate();
+        const d = p.date?.toDate?.();
         return (
           d &&
           d.getMonth() === now.getMonth() &&
@@ -305,7 +318,7 @@ const Payment = () => {
     } else if (filter === 'lastMonth') {
       const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       filtered = allPayments.filter(p => {
-        const d = p.date?.toDate();
+        const d = p.date?.toDate?.();
         return (
           d &&
           d.getMonth() === lastMonth.getMonth() &&
@@ -336,6 +349,10 @@ const Payment = () => {
 
   /* ================= GET PRODUCT NAME ================= */
   const getProductName = transaction => {
+    if (transaction.isInitialBalance) {
+      return 'Initial Balance (Opening Due)';
+    }
+
     if (transaction.productName) {
       return isMobile && transaction.productName.length > 20
         ? transaction.productName.substring(0, 18) + '...'
@@ -360,19 +377,17 @@ const Payment = () => {
   };
 
   /* ================= DERIVE MAX PAYMENT AMOUNT ================= */
-  // FIX: Compute the correct maximum based on the selected settle type
   const getMaxAmount = () => {
-    if (settleType === 'initial') return vendorInitialBalance;
-    if (settleType === 'individual' && selectedPurchase)
+    if (settleType === 'individual' && selectedPurchase) {
       return selectedPurchase.remainingAmount;
+    }
     return selectedVendor?.balance || 0;
   };
 
   const getAmountHelperText = () => {
-    if (settleType === 'initial')
-      return `Max: ₹${vendorInitialBalance} (Initial Balance only)`;
-    if (settleType === 'individual' && selectedPurchase)
-      return `Max: ₹${selectedPurchase.remainingAmount} (Selected purchase due)`;
+    if (settleType === 'individual' && selectedPurchase) {
+      return `Max: ₹${selectedPurchase.remainingAmount} (Selected item due)`;
+    }
     return `Max: ₹${selectedVendor?.balance || 0} (Total outstanding balance)`;
   };
 
@@ -389,7 +404,6 @@ const Payment = () => {
 
     const amt = Number(paymentAmount);
 
-    // Global guard: never pay more than total vendor balance
     if (amt > selectedVendor.balance) {
       setSnackbar({
         open: true,
@@ -400,30 +414,20 @@ const Payment = () => {
     }
 
     if (settleType === 'individual') {
-      if (vendorTransactions.length === 0) {
-        // FIX: Auto-switch to initial if available instead of dead-end error
-        if (vendorInitialBalance > 0) {
-          setSettleType('initial');
-          setSnackbar({
-            open: true,
-            message: 'No pending bills found. Switched to Initial Balance payment.',
-            severity: 'info'
-          });
-        } else {
-          setSnackbar({
-            open: true,
-            message: 'No pending purchases found for this vendor.',
-            severity: 'info'
-          });
-        }
+      if (payableItems.length === 0) {
+        setSnackbar({
+          open: true,
+          message: 'No pending dues found for this vendor.',
+          severity: 'info'
+        });
         return;
       }
       setSelectPurchaseDialog(true);
     } else if (settleType === 'normal') {
-      if (vendorTransactions.length === 0) {
+      if (payableItems.length === 0) {
         setSnackbar({
           open: true,
-          message: 'No pending purchases available for Normal settle.',
+          message: 'No pending dues available for Normal settle.',
           severity: 'info'
         });
         return;
@@ -437,112 +441,30 @@ const Payment = () => {
         return;
       }
       handleNormalPayment();
-    } else if (settleType === 'initial') {
-      if (vendorInitialBalance <= 0) {
-        setSnackbar({
-          open: true,
-          message: 'No initial balance available for this vendor.',
-          severity: 'info'
-        });
-        return;
-      }
-      // FIX: guard against paying more than initial balance (separate from total balance)
-      if (amt > vendorInitialBalance) {
-        setSnackbar({
-          open: true,
-          message: `Amount cannot exceed initial balance of ₹${vendorInitialBalance}.`,
-          severity: 'error'
-        });
-        return;
-      }
-      handleInitialBalancePayment();
     }
   };
 
-  /* ================= HANDLE INITIAL BALANCE PAYMENT ================= */
-  const handleInitialBalancePayment = async () => {
-    if (!selectedVendor || !paymentAmount) return;
-
-    const amt = Number(paymentAmount);
-    // Double-check guards inside the handler
-    if (amt <= 0 || amt > vendorInitialBalance || amt > selectedVendor.balance) return;
-
-    const confirmMessage = isMobile
-      ? `Pay ₹${amt} towards Initial Balance?\nRemaining after: ₹${vendorInitialBalance - amt}`
-      : `⚠️ INITIAL BALANCE SETTLEMENT\n\n` +
-        `Amount: ₹${amt}\n` +
-        `Current Initial Balance: ₹${vendorInitialBalance}\n` +
-        `Remaining Initial Balance: ₹${vendorInitialBalance - amt}\n\n` +
-        `Proceed with this payment?`;
-
-    if (!window.confirm(confirmMessage)) return;
-
-    setProcessingPayment(true);
-
-    try {
-      const newInitialBalance = vendorInitialBalance - amt;
-      const newVendorBalance = selectedVendor.balance - amt;
-
-      await updateDoc(doc(db, 'vendors', selectedVendor.id), {
-        balance: newVendorBalance,
-        initialBalance: newInitialBalance,
-        updatedAt: serverTimestamp()
-      });
-
-      await addDoc(collection(db, 'payments'), {
-        vendorId: selectedVendor.id,
-        vendorName: selectedVendor.vendorName,
-        amount: amt,
-        paymentMode,
-        previousBalance: selectedVendor.balance,
-        newBalance: newVendorBalance,
-        previousInitialBalance: vendorInitialBalance,
-        newInitialBalance,
-        date: serverTimestamp(),
-        settledType: 'initial',
-        type: 'customer_payment',
-        notes: `Payment towards initial balance`
-      });
-
-      setShowSuccess(true);
-      setSnackbar({
-        open: true,
-        message: `₹${amt} payment applied to initial balance successfully.`,
-        severity: 'success'
-      });
-
-      setTimeout(() => {
-        setSelectedVendor(null);
-        setVendorTransactions([]);
-        setVendorInitialBalance(0);
-        setPaymentAmount('');
-        setProcessingPayment(false);
-        setShowSuccess(false);
-        setSettleType('individual');
-      }, 1500);
-    } catch (error) {
-      console.error('Initial balance payment error:', error);
-      setSnackbar({
-        open: true,
-        message: 'Payment failed. Please try again.',
-        severity: 'error'
-      });
-      setProcessingPayment(false);
-    }
-  };
-
-  /* ================= HANDLE NORMAL PAYMENT ================= */
+  /* ================= HANDLE NORMAL PAYMENT =================
+     Distributes the payment across every payable item — real purchase
+     bills AND (if present) the Initial Balance card. Real bills get their
+     `remainingAmount` updated on the transaction doc as before; the
+     Initial Balance's share reduces `vendor.initialBalance` in the same
+     batch, alongside the overall `vendor.balance` reduction.
+  */
   const handleNormalPayment = async () => {
     if (!selectedVendor || !paymentAmount || distributionPreview.length === 0) return;
 
     const amt = Number(paymentAmount);
     if (amt <= 0 || amt > selectedVendor.balance) return;
 
+    const initialItem = distributionPreview.find(d => d.isInitialBalance);
+    const txnItems = distributionPreview.filter(d => !d.isInitialBalance);
+
     const confirmMessage = isMobile
-      ? `NORMAL SETTLE\nAmount: ₹${amt}\nDistribute across ${distributionPreview.length} purchases?`
+      ? `NORMAL SETTLE\nAmount: ₹${amt}\nDistribute across ${distributionPreview.length} item(s)${initialItem ? ' incl. Initial Balance' : ''}?`
       : `⚠️ NORMAL SETTLE\n\n` +
         `Amount: ₹${amt}\n` +
-        `Will be distributed across ${distributionPreview.length} purchases\n\n` +
+        `Will be distributed across ${distributionPreview.length} item(s)${initialItem ? ', including the Initial Balance' : ''}\n\n` +
         `Distribution:\n${distributionPreview
           .map(
             d =>
@@ -557,7 +479,8 @@ const Payment = () => {
     try {
       const batch = writeBatch(db);
 
-      distributionPreview.forEach(txn => {
+      // Update each real purchase transaction
+      txnItems.forEach(txn => {
         batch.update(doc(db, 'transactions', txn.id), {
           remainingAmount: txn.newRemaining,
           status: txn.newRemaining <= 0 ? 'paid' : 'partial',
@@ -566,8 +489,15 @@ const Payment = () => {
       });
 
       const newVendorBalance = selectedVendor.balance - amt;
+      const newInitialBalance = initialItem
+        ? Math.max(0, vendorInitialBalance - initialItem.allocatedAmount)
+        : vendorInitialBalance;
+
+      // Update vendor's overall balance, and its initialBalance too if the
+      // Initial Balance card took part in this distribution.
       batch.update(doc(db, 'vendors', selectedVendor.id), {
         balance: newVendorBalance,
+        ...(initialItem ? { initialBalance: newInitialBalance } : {}),
         updatedAt: serverTimestamp()
       });
 
@@ -582,9 +512,19 @@ const Payment = () => {
         date: serverTimestamp(),
         settledType: 'normal',
         type: 'customer_payment',
-        notes: `Normal settle distributed across ${distributionPreview.length} purchases`,
+        notes: `Normal settle distributed across ${distributionPreview.length} item(s)${initialItem ? ', including the Initial Balance' : ''}`,
+        transactionIds: txnItems.map(d => d.id),
+        includesInitialBalance: !!initialItem,
+        ...(initialItem
+          ? {
+              initialBalanceAllocated: initialItem.allocatedAmount,
+              previousInitialBalance: vendorInitialBalance,
+              newInitialBalance
+            }
+          : {}),
         distribution: distributionPreview.map(d => ({
-          transactionId: d.id,
+          transactionId: d.isInitialBalance ? null : d.id,
+          isInitialBalance: !!d.isInitialBalance,
           productName: getProductName(d),
           allocatedAmount: d.allocatedAmount,
           newRemaining: d.newRemaining
@@ -596,7 +536,7 @@ const Payment = () => {
       setShowSuccess(true);
       setSnackbar({
         open: true,
-        message: `₹${amt} distributed across ${distributionPreview.length} purchases.`,
+        message: `₹${amt} distributed across ${distributionPreview.length} item(s).`,
         severity: 'success'
       });
 
@@ -621,7 +561,13 @@ const Payment = () => {
     }
   };
 
-  /* ================= HANDLE INDIVIDUAL PAYMENT ================= */
+  /* ================= HANDLE INDIVIDUAL PAYMENT =================
+     selectedPurchase can now be either a real transaction OR the synthetic
+     Initial Balance card. Branch accordingly: real items update the
+     transaction's remainingAmount; the Initial Balance card updates
+     vendor.initialBalance directly (same data path handleInitialBalance-
+     Payment used to use, before it was merged in here).
+  */
   const handleIndividualPayment = async () => {
     if (!selectedVendor || !selectedPurchase || !paymentAmount) return;
 
@@ -631,42 +577,68 @@ const Payment = () => {
     setProcessingPayment(true);
 
     try {
-      const newRemaining = selectedPurchase.remainingAmount - amt;
       const newVendorBalance = selectedVendor.balance - amt;
 
-      await updateDoc(doc(db, 'vendors', selectedVendor.id), {
-        balance: newVendorBalance,
-        updatedAt: serverTimestamp()
-      });
+      if (selectedPurchase.isInitialBalance) {
+        const newInitialBalance = Math.max(0, vendorInitialBalance - amt);
 
-      await updateDoc(doc(db, 'transactions', selectedPurchase.id), {
-        remainingAmount: newRemaining,
-        status: newRemaining <= 0 ? 'paid' : 'partial',
-        lastPaymentDate: serverTimestamp()
-      });
+        await updateDoc(doc(db, 'vendors', selectedVendor.id), {
+          balance: newVendorBalance,
+          initialBalance: newInitialBalance,
+          updatedAt: serverTimestamp()
+        });
 
-      await addDoc(collection(db, 'payments'), {
-        vendorId: selectedVendor.id,
-        vendorName: selectedVendor.vendorName,
-        transactionId: selectedPurchase.id,
-        productName: getProductName(selectedPurchase),
-        amount: amt,
-        paymentMode,
-        previousBalance: selectedVendor.balance,
-        newBalance: newVendorBalance,
-        previousRemaining: selectedPurchase.remainingAmount,
-        newRemaining,
-        date: serverTimestamp(),
-        settledType: 'individual',
-        notes: `Individual settle for ${getProductName(selectedPurchase)}`,
-        type: 'customer_payment'
-      });
+        await addDoc(collection(db, 'payments'), {
+          vendorId: selectedVendor.id,
+          vendorName: selectedVendor.vendorName,
+          amount: amt,
+          paymentMode,
+          previousBalance: selectedVendor.balance,
+          newBalance: newVendorBalance,
+          previousInitialBalance: vendorInitialBalance,
+          newInitialBalance,
+          date: serverTimestamp(),
+          settledType: 'initial',
+          type: 'customer_payment',
+          notes: 'Payment applied to Initial Balance (selected via Individual settle)'
+        });
+      } else {
+        const newRemaining = selectedPurchase.remainingAmount - amt;
+
+        await updateDoc(doc(db, 'vendors', selectedVendor.id), {
+          balance: newVendorBalance,
+          updatedAt: serverTimestamp()
+        });
+
+        await updateDoc(doc(db, 'transactions', selectedPurchase.id), {
+          remainingAmount: newRemaining,
+          status: newRemaining <= 0 ? 'paid' : 'partial',
+          lastPaymentDate: serverTimestamp()
+        });
+
+        await addDoc(collection(db, 'payments'), {
+          vendorId: selectedVendor.id,
+          vendorName: selectedVendor.vendorName,
+          transactionId: selectedPurchase.id,
+          productName: getProductName(selectedPurchase),
+          amount: amt,
+          paymentMode,
+          previousBalance: selectedVendor.balance,
+          newBalance: newVendorBalance,
+          previousRemaining: selectedPurchase.remainingAmount,
+          newRemaining,
+          date: serverTimestamp(),
+          settledType: 'individual',
+          notes: `Individual settle for ${getProductName(selectedPurchase)}`,
+          type: 'customer_payment'
+        });
+      }
 
       setShowSuccess(true);
       setSelectPurchaseDialog(false);
       setSnackbar({
         open: true,
-        message: `₹${amt} payment applied to selected purchase.`,
+        message: `₹${amt} payment applied successfully.`,
         severity: 'success'
       });
 
@@ -701,22 +673,15 @@ const Payment = () => {
   ];
 
   /* ================= DERIVED: IS PAY BUTTON DISABLED ================= */
-  // FIX: Comprehensive disabled logic covering all settle types and edge cases
   const isPayButtonDisabled = () => {
     if (processingPayment) return true;
     if (!paymentAmount || Number(paymentAmount) <= 0) return true;
 
     if (settleType === 'individual') {
-      // Disabled if no pending transactions exist (nothing to pay against)
-      return vendorTransactions.length === 0;
+      return payableItems.length === 0;
     }
     if (settleType === 'normal') {
-      // Disabled if no transactions OR distribution hasn't been computed yet
-      return vendorTransactions.length === 0 || distributionPreview.length === 0;
-    }
-    if (settleType === 'initial') {
-      // Disabled if no initial balance OR amount exceeds it
-      return vendorInitialBalance <= 0 || Number(paymentAmount) > vendorInitialBalance;
+      return payableItems.length === 0 || distributionPreview.length === 0;
     }
     return true;
   };
@@ -957,7 +922,7 @@ const Payment = () => {
                     </Box>
                     <Box>
                       <Typography variant="body2" color="text.secondary">
-                        Pending Purchases
+                        Pending Bills
                       </Typography>
                       <Typography variant={isMobile ? 'h6' : 'h5'} fontWeight={700}>
                         {loadingTransactions ? '...' : vendorTransactions.length}
@@ -966,7 +931,7 @@ const Payment = () => {
                   </Stack>
                 </Paper>
 
-                {/* Initial balance card */}
+                {/* Initial balance card (informational) */}
                 {vendorInitialBalance > 0 && (
                   <Paper
                     sx={{
@@ -994,7 +959,7 @@ const Payment = () => {
                         </Box>
                       </Stack>
                       <Chip
-                        label="From Vendor Creation"
+                        label="Included in payment below"
                         size="small"
                         color="primary"
                         variant="outlined"
@@ -1003,7 +968,7 @@ const Payment = () => {
                   </Paper>
                 )}
 
-                {/* FIX: Informational banner when only initial balance is available */}
+                {/* Informational banner when only the Initial Balance is payable */}
                 {!loadingTransactions &&
                   vendorTransactions.length === 0 &&
                   vendorInitialBalance > 0 && (
@@ -1012,21 +977,20 @@ const Payment = () => {
                       severity="info"
                       sx={{ mt: 2, borderRadius: 2 }}
                     >
-                      No pending bills found. You can collect payment against the{' '}
+                      No itemized bills for this vendor. Your payment will be applied to the{' '}
                       <strong>Initial Balance</strong> of ₹{vendorInitialBalance}.
                     </Alert>
                   )}
 
-                {/* FIX: Banner when vendor has no bills AND no initial balance */}
-                {!loadingTransactions &&
-                  vendorTransactions.length === 0 &&
-                  vendorInitialBalance <= 0 && (
-                    <Alert severity="warning" sx={{ mt: 2, borderRadius: 2 }}>
-                      This vendor has no pending bills and no initial balance to settle.
-                    </Alert>
-                  )}
+                {/* Banner when there's truly nothing to settle */}
+                {!loadingTransactions && payableItems.length === 0 && (
+                  <Alert severity="warning" sx={{ mt: 2, borderRadius: 2 }}>
+                    This vendor has no pending bills and no initial balance to settle.
+                  </Alert>
+                )}
 
-                {/* Settlement Type Radio Group */}
+                {/* Settlement Type Radio Group — only Individual / Normal now.
+                    The Initial Balance is reachable through both. */}
                 <FormControl component="fieldset" sx={{ mt: isMobile ? 2 : 3 }}>
                   <FormLabel
                     component="legend"
@@ -1039,7 +1003,8 @@ const Payment = () => {
                     value={settleType}
                     onChange={e => {
                       setSettleType(e.target.value);
-                      setPaymentAmount(''); // Reset amount when switching type
+                      setPaymentAmount('');
+                      setSelectedPurchase(null);
                     }}
                   >
                     <FormControlLabel
@@ -1051,7 +1016,7 @@ const Payment = () => {
                           <span>Individual</span>
                         </Stack>
                       }
-                      disabled={vendorTransactions.length === 0}
+                      disabled={payableItems.length === 0}
                     />
                     <FormControlLabel
                       value="normal"
@@ -1062,38 +1027,26 @@ const Payment = () => {
                           <span>Normal</span>
                         </Stack>
                       }
-                      disabled={vendorTransactions.length === 0}
-                    />
-                    <FormControlLabel
-                      value="initial"
-                      control={<Radio size={isMobile ? 'small' : 'medium'} />}
-                      label={
-                        <Stack direction="row" alignItems="center" spacing={0.5}>
-                          <InitialBalanceIcon fontSize="small" />
-                          <span>Initial Balance</span>
-                        </Stack>
-                      }
-                      disabled={vendorInitialBalance <= 0}
+                      disabled={payableItems.length === 0}
                     />
                   </RadioGroup>
 
-                  {/* Contextual hints */}
                   {vendorTransactions.length === 0 && vendorInitialBalance > 0 && (
                     <Typography
                       variant="caption"
                       color="primary.main"
                       sx={{ display: 'block', mt: 0.5 }}
                     >
-                      ✅ Only "Initial Balance" payment is available for this vendor.
+                      ℹ️ The Initial Balance will appear as the payable item below.
                     </Typography>
                   )}
-                  {vendorInitialBalance <= 0 && settleType === 'initial' && (
+                  {vendorTransactions.length > 0 && vendorInitialBalance > 0 && (
                     <Typography
                       variant="caption"
-                      color="error"
+                      color="text.secondary"
                       sx={{ display: 'block', mt: 0.5 }}
                     >
-                      ❌ No initial balance available for this vendor.
+                      ℹ️ The Initial Balance is included as one of the payable items below.
                     </Typography>
                   )}
                 </FormControl>
@@ -1105,18 +1058,28 @@ const Payment = () => {
                   type="number"
                   value={paymentAmount}
                   onChange={e => setPaymentAmount(e.target.value)}
-                  sx={{ mt: isMobile ? 1.5 : 2 }}
+                  sx={{
+                    mt: isMobile ? 1.5 : 2,
+                    // Hide the native up/down spinner arrows on the number input
+                    '& input[type=number]': {
+                      MozAppearance: 'textfield'
+                    },
+                    '& input[type=number]::-webkit-outer-spin-button': {
+                      WebkitAppearance: 'none',
+                      margin: 0
+                    },
+                    '& input[type=number]::-webkit-inner-spin-button': {
+                      WebkitAppearance: 'none',
+                      margin: 0
+                    }
+                  }}
                   size={isMobile ? 'small' : 'medium'}
                   inputProps={{ min: 1, max: getMaxAmount() }}
                   InputProps={{
                     startAdornment: <Typography sx={{ mr: 0.5 }}>₹</Typography>
                   }}
-                  // FIX: Helper text shows the correct max for the current settle type
                   helperText={getAmountHelperText()}
-                  error={
-                    !!paymentAmount &&
-                    Number(paymentAmount) > getMaxAmount()
-                  }
+                  error={!!paymentAmount && Number(paymentAmount) > getMaxAmount()}
                 />
 
                 {/* Normal settle distribution preview */}
@@ -1139,9 +1102,14 @@ const Payment = () => {
                     {distributionPreview.map((item, index) => (
                       <Box key={item.id} sx={{ mb: 1 }}>
                         <Stack direction="row" justifyContent="space-between">
-                          <Typography variant="body2" fontWeight={500}>
-                            {getProductName(item)}
-                          </Typography>
+                          <Stack direction="row" alignItems="center" spacing={0.5}>
+                            {item.isInitialBalance && (
+                              <InitialBalanceIcon sx={{ fontSize: 16 }} color="primary" />
+                            )}
+                            <Typography variant="body2" fontWeight={500}>
+                              {getProductName(item)}
+                            </Typography>
+                          </Stack>
                           <Typography variant="body2" fontWeight={600} color="success.main">
                             ₹{item.allocatedAmount.toFixed(2)}
                           </Typography>
@@ -1181,7 +1149,6 @@ const Payment = () => {
                 {paymentModesGrid}
 
                 {/* Submit button */}
-                {/* FIX: Uses isPayButtonDisabled() which correctly handles all cases */}
                 <Button
                   fullWidth
                   sx={{
@@ -1205,10 +1172,8 @@ const Payment = () => {
                   {processingPayment
                     ? 'Processing...'
                     : settleType === 'individual'
-                    ? 'Select Purchase & Pay'
-                    : settleType === 'normal'
-                    ? 'Pay & Distribute'
-                    : 'Pay Initial Balance'}
+                    ? 'Select Item & Pay'
+                    : 'Pay & Distribute'}
                 </Button>
 
                 {processingPayment && (
@@ -1277,20 +1242,30 @@ const Payment = () => {
                       <Typography variant="caption" display="block">
                         {p.paymentMode} • {formatDate(p.date)}
                       </Typography>
+
                       {p.productName && p.settledType !== 'initial' && (
                         <Typography variant="caption" display="block" noWrap>
                           {p.productName}
                         </Typography>
                       )}
+
                       {p.settledType === 'initial' && (
-                        <Typography
-                          variant="caption"
-                          display="block"
-                          color="primary.main"
-                        >
+                        <Typography variant="caption" display="block" color="primary.main">
                           Initial Balance Payment
+                          {typeof p.previousInitialBalance === 'number' &&
+                            typeof p.newInitialBalance === 'number' &&
+                            ` • ₹${p.previousInitialBalance} → ₹${p.newInitialBalance}`}
                         </Typography>
                       )}
+
+                      {p.settledType === 'normal' && Array.isArray(p.distribution) && (
+                        <Typography variant="caption" display="block" color="success.main">
+                          Distributed across {p.distribution.length} item{p.distribution.length !== 1 ? 's' : ''}
+                          {p.includesInitialBalance &&
+                            ` (incl. ₹${p.initialBalanceAllocated} to Initial Balance)`}
+                        </Typography>
+                      )}
+
                       <Stack
                         direction="row"
                         spacing={0.5}
@@ -1375,7 +1350,8 @@ const Payment = () => {
         </Paper>
       )}
 
-      {/* Individual purchase selection dialog */}
+      {/* Item selection dialog — now lists real bills AND the Initial
+          Balance card together (when settleType is 'individual') */}
       <Dialog
         open={selectPurchaseDialog}
         onClose={() => !processingPayment && setSelectPurchaseDialog(false)}
@@ -1391,7 +1367,7 @@ const Payment = () => {
         <DialogTitle sx={{ p: isMobile ? 2 : 3 }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             <Typography variant={isMobile ? 'subtitle1' : 'h6'} fontWeight={700}>
-              Select Purchase
+              Select Item to Pay
             </Typography>
             <IconButton
               size="small"
@@ -1411,16 +1387,16 @@ const Payment = () => {
             <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
               <CircularProgress />
             </Box>
-          ) : vendorTransactions.length === 0 ? (
+          ) : payableItems.length === 0 ? (
             <Box sx={{ textAlign: 'center', p: 4 }}>
               <Inventory
                 sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }}
               />
-              <Typography color="text.secondary">No pending purchases</Typography>
+              <Typography color="text.secondary">No pending dues</Typography>
             </Box>
           ) : (
             <List>
-              {vendorTransactions.map((txn, index) => {
+              {payableItems.map((txn, index) => {
                 const isSelected = selectedPurchase?.id === txn.id;
                 const canPay = Number(paymentAmount) <= txn.remainingAmount;
 
@@ -1434,45 +1410,73 @@ const Payment = () => {
                         borderRadius: 2,
                         mb: 1,
                         p: isMobile ? 1.5 : 2,
-                        border: isSelected ? '2px solid #007AFF' : '1px solid #e0e0e0',
-                        bgcolor: isSelected ? '#e3f2fd' : 'white'
+                        border: isSelected
+                          ? '2px solid #007AFF'
+                          : txn.isInitialBalance
+                          ? '1px dashed #1976d2'
+                          : '1px solid #e0e0e0',
+                        bgcolor: isSelected
+                          ? '#e3f2fd'
+                          : txn.isInitialBalance
+                          ? '#f5faff'
+                          : 'white'
                       }}
                     >
                       <ListItemText
                         primary={
-                          <Typography
-                            fontWeight={600}
-                            variant={isMobile ? 'body2' : 'body1'}
-                          >
-                            {getProductName(txn)}
-                          </Typography>
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            {txn.isInitialBalance && (
+                              <InitialBalanceIcon fontSize="small" color="primary" />
+                            )}
+                            <Typography
+                              fontWeight={600}
+                              variant={isMobile ? 'body2' : 'body1'}
+                            >
+                              {getProductName(txn)}
+                            </Typography>
+                            {txn.isInitialBalance && (
+                              <Chip
+                                label="Initial"
+                                size="small"
+                                color="primary"
+                                variant="outlined"
+                                sx={{ height: 18, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                              />
+                            )}
+                          </Stack>
                         }
                         secondary={
-                          <>
-                            <Stack
-                              direction="row"
-                              spacing={1}
-                              alignItems="center"
-                              sx={{ mt: 0.5 }}
-                            >
-                              <CalendarToday sx={{ fontSize: 12 }} />
-                              <Typography variant="caption">
-                                {formatDate(txn.date)}
-                              </Typography>
-                            </Stack>
-                            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-                              <Typography variant="caption">
-                                Total: ₹{txn.amount}
-                              </Typography>
-                              <Typography
-                                variant="caption"
-                                color="error.main"
-                                fontWeight={600}
+                          txn.isInitialBalance ? (
+                            <Typography variant="caption" color="text.secondary">
+                              Opening balance carried over from vendor creation
+                            </Typography>
+                          ) : (
+                            <>
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                                sx={{ mt: 0.5 }}
                               >
-                                Due: ₹{txn.remainingAmount}
-                              </Typography>
-                            </Stack>
-                          </>
+                                <CalendarToday sx={{ fontSize: 12 }} />
+                                <Typography variant="caption">
+                                  {formatDate(txn.date)}
+                                </Typography>
+                              </Stack>
+                              <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+                                <Typography variant="caption">
+                                  Total: ₹{txn.amount}
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  color="error.main"
+                                  fontWeight={600}
+                                >
+                                  Due: ₹{txn.remainingAmount}
+                                </Typography>
+                              </Stack>
+                            </>
+                          )
                         }
                       />
                       <ListItemSecondaryAction>
@@ -1484,9 +1488,7 @@ const Payment = () => {
                         />
                       </ListItemSecondaryAction>
                     </ListItem>
-                    {index < vendorTransactions.length - 1 && (
-                      <Divider sx={{ my: 1 }} />
-                    )}
+                    {index < payableItems.length - 1 && <Divider sx={{ my: 1 }} />}
                   </React.Fragment>
                 );
               })}
